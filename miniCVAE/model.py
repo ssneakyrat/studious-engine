@@ -49,6 +49,13 @@ class Encoder(nn.Module):
         self.fc_mu = nn.Linear(self.flattened_size, self.latent_dim)
         self.fc_logvar = nn.Linear(self.flattened_size, self.latent_dim)
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, x):
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1) # Flatten
@@ -69,6 +76,7 @@ class FiLM(nn.Module):
         # condition shape: (B, D)
         gamma_beta = self.cond_proj(condition) # (B, C*2)
         gamma, beta = torch.chunk(gamma_beta, 2, dim=-1) # (B, C), (B, C)
+        gamma = torch.tanh(gamma) * 2 + 1  # Range [−1, 3]
 
         # Reshape gamma and beta for broadcasting: (B, C, 1, 1)
         gamma = gamma.unsqueeze(-1).unsqueeze(-1)
@@ -154,6 +162,13 @@ class Decoder(nn.Module):
         # Final convolution to map to 1 channel (mel spectrogram)
         self.final_conv = nn.Conv2d(in_channels, 1, kernel_size=1, padding=0) # 1x1 conv
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, noise, z):
         # noise shape: (B, 1, N_MELS, T)
         # z shape: (B, LATENT_DIM)
@@ -211,8 +226,9 @@ class ConditionalVAE(pl.LightningModule):
         # KL Divergence
         # KL = -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         # Formula uses logvar = log(sigma^2)
-        logvar = torch.clamp(logvar, -10, 10) # Clamp logvar to prevent extreme values
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1) # Sum over latent dim
+        logvar = torch.clamp(logvar, -5, 5) # Clamp logvar to prevent extreme values
+        mu = torch.clamp(mu, -5, 5)  # Also clamp mu values
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - torch.exp(logvar), dim=1) # Sum over latent dim
         kl_loss = torch.mean(kl_loss) # Average over batch
 
         return recon_loss, kl_loss
@@ -239,7 +255,8 @@ class ConditionalVAE(pl.LightningModule):
 
         # Calculate loss
         recon_loss, kl_loss = self._vae_loss(recon_mel, x, mu, logvar)
-        total_loss = recon_loss + self.hparams.training['beta_kl'] * kl_loss
+        beta_kl = min(1.0, self.current_epoch / self.hparams.training['annealing_epochs']) * self.hparams.training['beta_kl']
+        total_loss = recon_loss + beta_kl * kl_loss
 
         # Logging
         self.log('train/loss', total_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)

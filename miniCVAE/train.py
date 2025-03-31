@@ -94,7 +94,7 @@ def train(config_path="config/default.yaml"):
         devices=config['training']['devices'],
         log_every_n_steps=10,
         detect_anomaly=True, # Useful for debugging NaN/Inf issues
-        gradient_clip_val=1.0
+        gradient_clip_val=0.5
     )
 
     # 6. Start Training

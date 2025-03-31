@@ -10,7 +10,7 @@ audio:
   fmin: 0         # Optional: Add if needed by plotting or preprocessing
   fmax: 8000      # Optional: Add if needed by plotting or preprocessing
   # Calculated internally: target_frames = ceil(target_duration_sec * sample_rate / hop_length)
-  padding_value: -100.0 # Value for padding shorter spectrograms (dB scale)
+  padding_value: -10.0 # Value for padding shorter spectrograms (dB scale)
 
 model:
   latent_dim: 128           # Dimension of the latent space z
@@ -24,7 +24,7 @@ model:
 
 training:
   batch_size: 16
-  learning_rate: 1.0e-4
+  learning_rate: 5.0e-5
   epochs: 10000
   beta_kl: 1.0             # Weight for KL divergence term (can be annealed)
   val_check_interval: 1.0  # Validate every epoch (1.0 = fraction of epoch, int = steps)
@@ -33,3 +33,4 @@ training:
   accelerator: "auto"      # "cpu", "gpu", "tpu", "mps", "auto"
   devices: 1               # Number of devices to use (e.g., GPUs)
   vis_log_every_n_steps: 10 # Log visualizations every N steps
+  annealing_epochs: 10
