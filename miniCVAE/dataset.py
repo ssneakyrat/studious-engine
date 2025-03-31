@@ -260,3 +260,19 @@ class MelDataset(Dataset):
             except Exception as e:
                 # Can happen if file is already closed elsewhere
                 logger.debug(f"Exception closing HDF5 file in dataset destructor: {e}")
+
+    def __getstate__(self):
+        """Return state values to be pickled (excluding file handle)."""
+        state = self.__dict__.copy()
+        # Don't pickle file_handle
+        if 'file_handle' in state:
+            if self.file_handle:
+                self.file_handle.close()  # Close file before pickling
+            state['file_handle'] = None
+        return state
+
+    def __setstate__(self, state):
+        """Restore state from the unpickled state values."""
+        self.__dict__.update(state)
+        # file_handle will be reopened on-demand in __getitem__
+        self.file_handle = None
