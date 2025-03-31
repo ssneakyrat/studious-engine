@@ -7,30 +7,39 @@ audio:
   hop_length: 256
   n_mels: 80
   target_duration_sec: 10
-  fmin: 0         # Optional: Add if needed by plotting or preprocessing
-  fmax: 8000      # Optional: Add if needed by plotting or preprocessing
+  fmin: 0         # Add if needed by plotting or preprocessing
+  fmax: 8000      # Add if needed by plotting or preprocessing
   # Calculated internally: target_frames = ceil(target_duration_sec * sample_rate / hop_length)
   padding_value: -10.0 # Value for padding shorter spectrograms (dB scale)
+  f0_min: 50      # Min F0 for analysis (Hz)
+  f0_max: 500     # Max F0 for analysis (Hz)
 
 model:
-  latent_dim: 128           # Dimension of the latent space z
+  latent_dim: 64            # Reduced from 128 for better training stability
   num_layers_encoder: 4     # Number of convolutional blocks in encoder
   num_layers_decoder: 4     # Number of convolutional blocks in decoder
-  encoder_base_channels: 16 # Initial channels in encoder (doubles each layer)
+  encoder_base_channels: 32 # Increased from 16 for better encoding capacity
   decoder_base_channels: 64 # Max channels in decoder (halves each layer towards output)
   kernel_size: 3            # Convolution kernel size
-  use_batchnorm: True       # Whether to use BatchNorm2d
-  mask_probability: 0.1     # Probability of masking the condition during training
+  use_batchnorm: False      # Disabled BatchNorm for VAE stability
+  mask_probability: 0.5     # Increased from 0.1 to encourage more robust latent representations
 
 training:
   batch_size: 16
-  learning_rate: 5.0e-5
-  epochs: 10000
-  beta_kl: 1.0             # Weight for KL divergence term (can be annealed)
-  val_check_interval: 1.0  # Validate every epoch (1.0 = fraction of epoch, int = steps)
-  num_vis_samples: 4       # Number of validation samples to visualize and log
-  num_workers: 0           # DataLoader workers (set > 0 if HDF5 handling allows)
-  accelerator: "auto"      # "cpu", "gpu", "tpu", "mps", "auto"
-  devices: 1               # Number of devices to use (e.g., GPUs)
-  vis_log_every_n_steps: 10 # Log visualizations every N steps
-  annealing_epochs: 10
+  learning_rate: 1.0e-4     # Increased from 5.0e-5 for faster convergence
+  epochs: 500               # Increased from 10000 (most VAEs converge much earlier)
+  beta_kl: 0.1              # Reduced from 1.0 - start with lower KL weight
+  val_check_interval: 1.0   # Validate every epoch (1.0 = fraction of epoch, int = steps)
+  num_vis_samples: 4        # Number of validation samples to visualize and log
+  num_workers: 4            # Increased from 0 for faster data loading
+  accelerator: "auto"       # "cpu", "gpu", "tpu", "mps", "auto"
+  devices: 1                # Number of devices to use (e.g., GPUs)
+  vis_log_every_n_steps: 50 # Increased from 10 to reduce TensorBoard log size
+  annealing_epochs: 150     # Increased from 10 for much slower KL annealing
+  gradient_clip_val: 1.0    # Add gradient clipping for stability
+  precision: 16             # Use mixed precision for faster training on GPUs
+  
+  # New settings for advanced training
+  warmup_epochs: 10         # Number of epochs for learning rate warmup
+  swa_start_epoch: 200      # When to start Stochastic Weight Averaging
+  early_stopping_patience: 20  # Patience for early stopping
