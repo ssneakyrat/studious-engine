@@ -1,0 +1,6 @@
+﻿miniCVAE/__pycache__
+miniCVAE/.ipynb_checkpoints
+miniCVAE/datasets
+miniCVAE/logs
+*.ipynb
+miniCVAE/requirements.txt

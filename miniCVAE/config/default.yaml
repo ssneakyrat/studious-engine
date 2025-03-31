@@ -1,0 +1,35 @@
+data:
+  h5_path: "datasets/gin/binary/gin.h5" # Path to the output of preprocess.py
+
+audio:
+  sample_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  n_mels: 80
+  target_duration_sec: 10
+  fmin: 0         # Optional: Add if needed by plotting or preprocessing
+  fmax: 8000      # Optional: Add if needed by plotting or preprocessing
+  # Calculated internally: target_frames = ceil(target_duration_sec * sample_rate / hop_length)
+  padding_value: -100.0 # Value for padding shorter spectrograms (dB scale)
+
+model:
+  latent_dim: 128           # Dimension of the latent space z
+  num_layers_encoder: 4     # Number of convolutional blocks in encoder
+  num_layers_decoder: 4     # Number of convolutional blocks in decoder
+  encoder_base_channels: 16 # Initial channels in encoder (doubles each layer)
+  decoder_base_channels: 64 # Max channels in decoder (halves each layer towards output)
+  kernel_size: 3            # Convolution kernel size
+  use_batchnorm: True       # Whether to use BatchNorm2d
+  mask_probability: 0.1     # Probability of masking the condition during training
+
+training:
+  batch_size: 16
+  learning_rate: 1.0e-4
+  epochs: 10000
+  beta_kl: 1.0             # Weight for KL divergence term (can be annealed)
+  val_check_interval: 1.0  # Validate every epoch (1.0 = fraction of epoch, int = steps)
+  num_vis_samples: 4       # Number of validation samples to visualize and log
+  num_workers: 0           # DataLoader workers (set > 0 if HDF5 handling allows)
+  accelerator: "auto"      # "cpu", "gpu", "tpu", "mps", "auto"
+  devices: 1               # Number of devices to use (e.g., GPUs)
+  vis_log_every_n_steps: 10 # Log visualizations every N steps
