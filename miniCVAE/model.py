@@ -306,24 +306,11 @@ class ConditionalVAE(pl.LightningModule):
         return loss
 
     def _vae_loss(self, recon_x, x, mu, logvar):
-        # Combined loss: L1 + MSE
-        # L1 helps with sharper details, MSE with overall structure
-        l1_weight = 0.5
-        mse_weight = 0.5
-        
-        l1_loss = F.l1_loss(recon_x, x, reduction='mean')
-        mse_loss = F.mse_loss(recon_x, x, reduction='mean')
-        
-        # Combined reconstruction loss
-        recon_loss = l1_weight * l1_loss + mse_weight * mse_loss
-        
-        # Try to add the STFT loss component if the batch supports it
-        try:
-            stft_loss = self._stft_loss(recon_x, x)
-            recon_loss = recon_loss + 0.1 * stft_loss
-        except Exception as e:
-            # If STFT fails, just continue with the regular loss
-            pass
+        # Use the dedicated mel loss from losses.py
+        from losses import MultiScaleMelLoss
+        mel_loss_fn = MultiScaleMelLoss()
+        loss_dict = mel_loss_fn(recon_x, x)
+        recon_loss = loss_dict['loss']
         
         # Improved KL divergence calculation
         # KL = -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
