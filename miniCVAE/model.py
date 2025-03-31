@@ -180,6 +180,17 @@ class Decoder(nn.Module):
 
         output_mel = self.final_conv(x) # (B, 1, N_MELS, T)
 
+        # Dimension check and optional resizing
+        noise_shape = noise.shape
+        output_mel_shape = output_mel.shape
+        if output_mel_shape[2] != noise_shape[2] or output_mel_shape[3] != noise_shape[3]:
+            print(f"WARN: Decoder output shape {output_mel_shape} does not match noise shape {noise_shape}. Resizing.")
+            output_mel = torch.nn.functional.interpolate(
+                output_mel,
+                size=(noise_shape[2], noise_shape[3]),  # H, W
+                mode='bilinear',
+                align_corners=False
+            )
         return output_mel
 
 class ConditionalVAE(pl.LightningModule):
@@ -217,6 +228,28 @@ class ConditionalVAE(pl.LightningModule):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
+
+    def _resize_to_match(self, tensor_to_resize, target_tensor):
+        """
+        Resizes tensor_to_resize to match the spatial dimensions (H, W) of target_tensor using bilinear interpolation.
+        """
+        resized_tensor = tensor_to_resize
+        target_shape = target_tensor.shape
+        tensor_shape = tensor_to_resize.shape
+
+        if len(tensor_shape) != 4 or len(target_shape) != 4:
+            print(f"WARN: _resize_to_match requires 4D tensors. Got {len(tensor_shape)} and {len(target_shape)} dimensions.")
+            return resized_tensor # Return original if not 4D
+
+        if tensor_shape[2] != target_shape[2] or tensor_shape[3] != target_shape[3]:
+            print(f"WARN: Resizing tensor from {tensor_shape} to {target_shape}.")
+            resized_tensor = torch.nn.functional.interpolate(
+                tensor_to_resize,
+                size=(target_shape[2], target_shape[3]),  # H, W
+                mode='bilinear',
+                align_corners=False
+            )
+        return resized_tensor
 
     def _vae_loss(self, recon_x, x, mu, logvar):
         # Reconstruction Loss (MSE)
@@ -316,10 +349,19 @@ class ConditionalVAE(pl.LightningModule):
                 # Use a unique identifier for the log, e.g., based on batch_idx
                 log_suffix = f"batch_{batch_idx}"
 
+                # Ensure tensors are 4D (B, C, H, W) before resizing
+                target_4d = target.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
+                pred_c_4d = pred_c.unsqueeze(0).unsqueeze(0)
+                pred_u_4d = pred_u.unsqueeze(0).unsqueeze(0)
+
+                # Resize predicted mels to match target dimensions
+                pred_c_resized = self._resize_to_match(pred_c_4d, target_4d)
+                pred_u_resized = self._resize_to_match(pred_u_4d, target_4d)
+
                 # Plot Conditional Comparison
                 title_c = f"Epoch {self.current_epoch} Step {self.global_step} - Sample (Cond) Batch {batch_idx}"
                 try:
-                    buf_c = plot_mel_comparison_to_buf(target, pred_c, title_c, self.config)
+                    buf_c = plot_mel_comparison_to_buf(target, pred_c_resized.squeeze(), title_c, self.config)
                     img_c = buf_to_image(buf_c)
                     self.logger.experiment.add_image(f"Validation/Conditional_{log_suffix}", np.array(img_c), self.global_step, dataformats='HWC')
                     buf_c.close()
@@ -330,7 +372,7 @@ class ConditionalVAE(pl.LightningModule):
                 # Plot Unconditional Generation (vs Target for reference)
                 title_u = f"Epoch {self.current_epoch} Step {self.global_step} - Sample (Uncond) Batch {batch_idx}"
                 try:
-                    buf_u = plot_mel_comparison_to_buf(target, pred_u, title_u, self.config) # Compare uncond with original target
+                    buf_u = plot_mel_comparison_to_buf(target, pred_u_resized.squeeze(), title_u, self.config) # Compare uncond with original target
                     img_u = buf_to_image(buf_u)
                     self.logger.experiment.add_image(f"Validation/Unconditional_{log_suffix}", np.array(img_u), self.global_step, dataformats='HWC')
                     buf_u.close()

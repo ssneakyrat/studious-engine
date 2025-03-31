@@ -61,23 +61,37 @@ def plot_mel_comparison_to_buf(target_mel, predicted_mel, title, config):
     target_np = target_mel.squeeze().cpu().numpy()
     predicted_np = predicted_mel.squeeze().cpu().numpy()
 
+    # Shape comparison
+    if target_np.shape != predicted_np.shape:
+        print(f"WARN: Target shape {target_np.shape} != Predicted shape {predicted_np.shape} after resizing.")
+
     fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, dpi=100)
     fig.suptitle(title, fontsize=14)
 
     # Plot Ground Truth
-    img_true = librosa.display.specshow(
-        target_np, sr=sr, hop_length=hop_length,
-        fmin=fmin, fmax=fmax, x_axis='time', y_axis='mel', ax=axes[0]
-    )
+    try:
+        img_true = librosa.display.specshow(
+            target_np, sr=sr, hop_length=hop_length,
+            fmin=fmin, fmax=fmax, x_axis='time', y_axis='mel', ax=axes[0]
+        )
+        axes[0].set_title("Ground Truth Mel")
+    except Exception as e:
+        print(f"ERROR: Plotting ground truth mel failed: {e}")
+        img_true = None # Handle error case
     axes[0].set_title("Ground Truth Mel")
     axes[0].label_outer() # Hide x axis labels
     fig.colorbar(img_true, ax=axes[0], format='%+2.0f dB')
 
     # Plot Predicted
-    img_pred = librosa.display.specshow(
-        predicted_np, sr=sr, hop_length=hop_length,
-        fmin=fmin, fmax=fmax, x_axis='time', y_axis='mel', ax=axes[1]
-    )
+    try:
+        img_pred = librosa.display.specshow(
+            predicted_np, sr=sr, hop_length=hop_length,
+            fmin=fmin, fmax=fmax, x_axis='time', y_axis='mel', ax=axes[1]
+        )
+        axes[1].set_title("Predicted Mel")
+    except Exception as e:
+        print(f"ERROR: Plotting predicted mel failed: {e}")
+        img_pred = None
     axes[1].set_title("Predicted Mel")
     fig.colorbar(img_pred, ax=axes[1], format='%+2.0f dB')
 
