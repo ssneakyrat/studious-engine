@@ -486,13 +486,14 @@ class DecoderRNN(nn.Module):
         return hidden_states, cell_states, context, attention_weights, processed_memory
     
     def _decode_step(self, 
-                    prev_output: torch.Tensor,
-                    memory: torch.Tensor,
-                    processed_memory: torch.Tensor,
-                    attention_weights: torch.Tensor,
-                    hidden_states: List[torch.Tensor],
-                    cell_states: List[torch.Tensor],
-                    mask: Optional[torch.Tensor] = None) -> Tuple:
+                prev_output: torch.Tensor,
+                memory: torch.Tensor,
+                processed_memory: torch.Tensor,
+                attention_weights: torch.Tensor,
+                hidden_states: List[torch.Tensor],
+                cell_states: List[torch.Tensor],
+                context: torch.Tensor,  # Add context as parameter
+                mask: Optional[torch.Tensor] = None) -> Tuple:
         """
         Perform one step of decoding.
         
@@ -503,6 +504,7 @@ class DecoderRNN(nn.Module):
             attention_weights: Previous attention weights [batch_size, seq_length]
             hidden_states: List of hidden states for each LSTM layer
             cell_states: List of cell states for each LSTM layer
+            context: Previous context vector [batch_size, encoder_dim]
             mask: Memory mask [batch_size, seq_length]
             
         Returns:
@@ -556,11 +558,11 @@ class DecoderRNN(nn.Module):
         return output, stop_token, next_hidden_states, next_cell_states, context, attention_weights
     
     def forward(self, 
-                memory: torch.Tensor,
-                max_decoder_steps: int = 1000,
-                teacher_forcing_ratio: float = 1.0,
-                target: Optional[torch.Tensor] = None,
-                memory_lengths: Optional[torch.Tensor] = None) -> Tuple:
+            memory: torch.Tensor,
+            max_decoder_steps: int = 1000,
+            teacher_forcing_ratio: float = 1.0,
+            target: Optional[torch.Tensor] = None,
+            memory_lengths: Optional[torch.Tensor] = None) -> Tuple:
         """
         Forward pass for the decoder.
         
@@ -608,6 +610,9 @@ class DecoderRNN(nn.Module):
         # Initial input: zero vector
         prev_output = torch.zeros(batch_size, self.output_dim, device=memory.device)
         
+        # Track which samples in the batch are done
+        done_mask = torch.zeros(batch_size, dtype=torch.bool, device=memory.device)
+        
         # Autoregressive decoding
         for t in range(max_steps):
             # Decide whether to use teacher forcing
@@ -624,6 +629,7 @@ class DecoderRNN(nn.Module):
                 attention_weights=attention_weights,
                 hidden_states=hidden_states,
                 cell_states=cell_states,
+                context=context,
                 mask=mask
             )
             
@@ -635,9 +641,14 @@ class DecoderRNN(nn.Module):
             # Update previous output
             prev_output = output
             
-            # Stop if stop token is predicted
-            if not use_teacher_forcing and stop_token.item() > 0.5:
-                break
+            # Check if we should stop decoding
+            if not use_teacher_forcing:
+                # Update done mask based on stop token predictions
+                done_mask = done_mask | (stop_token.squeeze(-1) > 0.5)
+                
+                # If all samples are done, break
+                if done_mask.all():
+                    break
         
         # Stack outputs
         outputs = torch.stack(outputs, dim=1)  # [batch_size, decoder_steps, output_dim]
