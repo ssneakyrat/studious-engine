@@ -1,0 +1,110 @@
+# FutureVox Configuration File
+
+# Data paths
+data:
+  data_raw: "./data/raw"     # Raw data directory containing wav, lab folders
+  data_processed: "./data/processed"  # Processed data directory
+  output_dir: "./outputs"    # Directory for model outputs
+
+# Audio parameters
+audio:
+  sample_rate: 22050         # Audio sample rate in Hz
+  n_fft: 1024                # FFT size
+  win_length: 1024           # Window length for STFT
+  hop_length: 256            # Hop length for STFT (affects frame rate)
+  n_mels: 80                 # Number of mel bands
+  fmin: 0                    # Min frequency for mel filter
+  fmax: 8000                 # Max frequency for mel filter
+  f0_min: 70                 # Min F0 for pitch extraction (Hz) - male voices can go lower (~60Hz)
+  f0_max: 800                # Max F0 for pitch extraction (Hz) - soprano high notes can reach 1000+ Hz
+  preemphasis: 0.97          # Preemphasis factor to enhance high frequencies
+  ref_level_db: 20           # Reference level dB for normalization
+  max_wav_value: 32768.0     # Maximum wav amplitude for 16-bit audio
+
+# Preprocessing parameters
+preprocessing:
+  min_phonemes: 5            # Minimum number of phonemes required in a sample
+  lab_sample_rate: 44100     # Sample rate of lab file timings
+  scaling_factor: 227.13     # Scaling factor for label timings (depends on forced aligner)
+  midi_method: "median"      # Method for MIDI note estimation ('median', 'mean', 'mode')
+  train_val_split: 0.9       # Percentage of data for training (rest for validation)
+
+# Model parameters
+model:
+  # Embedding dimensions
+  num_phonemes: 40          # Number of unique phonemes in the dataset
+  embedding_dim: 256        # Phoneme embedding dimension
+  
+  # Encoder parameters
+  encoder:
+    conv_channels: 256       # Channels for convolutional layers
+    conv_kernel_size: 5      # Kernel size for convolutional layers
+    conv_dropout: 0.1        # Dropout rate for convolutional layers
+    lstm_hidden_size: 128    # Per-direction (x2 for bidirectional)
+    lstm_layers: 2           # Number of LSTM layers
+    lstm_dropout: 0.1        # Dropout between LSTM layers
+  
+  # Musical feature parameters
+  musical_features:
+    input_dim: 4             # Pitch (F0), duration, velocity, phrasing
+    hidden_dims: [64, 128, 256]  # Hidden dimensions for musical feature MLP
+    dropout: 0.1             # Dropout rate for musical feature processing
+  
+  # Attention parameters
+  attention:
+    attention_dim: 128       # Dimension for attention calculations
+    location_features: 32    # Number of location-aware convolutional filters
+    location_kernel_size: 31 # Kernel size for location-aware attention
+    attention_dropout: 0.1   # Dropout rate for attention
+  
+  # Decoder parameters
+  decoder:
+    prenet_dims: [256, 128]  # Dimensions for decoder prenet
+    prenet_dropout: 0.5      # Dropout rate for prenet (high dropout is intentional)
+    lstm_dim: 256            # LSTM hidden dimension
+    lstm_layers: 2           # Number of LSTM layers
+    lstm_dropout: 0.5        # Dropout rate for decoder LSTMs (high value for regularization)
+    postnet_channels: 256    # Channels for postnet convolutional layers
+    postnet_kernel: 5        # Kernel size for postnet
+    postnet_dropout: 0.1     # Dropout rate for postnet
+    zoneout: 0.1             # Zoneout rate for LSTM regularization (optional)
+
+# Training parameters
+training:
+  batch_size: 16             # Batch size
+  max_epochs: 1000           # Maximum number of epochs
+  learning_rate: 0.001       # Initial learning rate
+  weight_decay: 0.0001       # L2 regularization
+  grad_clip_thresh: 1.0      # Gradient clipping threshold
+  lr_scheduler:
+    warmup_epochs: 10        # Number of warmup epochs
+    plateau_patience: 5      # Patience for plateau learning rate scheduler
+    plateau_factor: 0.5      # Factor by which to reduce learning rate
+  early_stopping:
+    patience: 15             # Early stopping patience
+    min_delta: 0.0001        # Minimum delta for early stopping
+  
+  # Loss weights
+  loss:
+    mel_loss_weight: 1.0     # Weight for mel spectrogram L1 loss
+    stop_token_weight: 0.25  # Weight for stop token binary cross entropy loss
+    guided_attention_weight: 0.2  # Weight for guided attention loss (optional)
+
+# Data loading
+dataloader:
+  num_workers: 4             # Number of workers for data loading
+  pin_memory: true          # Whether to pin memory (faster data transfer to GPU)
+  prefetch_factor: 4         # Prefetch factor for data loading
+
+# Logging
+logging:
+  log_dir: "./logs"          # Directory for TensorBoard logs
+  log_every_n_steps: 100     # Log every N steps
+  save_top_k: 3              # Number of best checkpoints to save
+  save_last: true           # Whether to save the last checkpoint
+  monitor: "val_loss"        # Metric to monitor for checkpoint saving
+  mode: "min"                # Mode for checkpoint saving (min/max)
+  log_grad_norm: true       # Whether to log gradient norm
+  log_parameters: false      # Whether to log model parameters (makes logs larger)
+  log_audio_every_n_epochs: 5 # How often to log audio samples
+  num_audio_samples: 4       # Number of audio samples to log
