@@ -144,34 +144,131 @@ class SVSPreprocessor:
         return frame_phonemes, frame_midi, f0_aligned, midi_aligned, mel_spec_aligned
     
     def plot_alignment(self, filename, phonemes, midi, f0, mel_spec):
-        """Plot alignment of phonemes, MIDI, F0, and mel spectrogram."""
-        fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+        """
+        Plot alignment of phonemes, MIDI notes, F0 contour, and mel spectrogram
+        in a more integrated view for easier analysis of alignment.
+        """
+        # Create figure with gridspec for better layout control
+        fig = plt.figure(figsize=(15, 10))
+        gs = fig.add_gridspec(4, 1, height_ratios=[1, 1, 1, 3], hspace=0.3)
         
-        # Plot phoneme sequence
+        # Shared x-axis for all plots
+        ax_phonemes = fig.add_subplot(gs[0])  # Phonemes on top
+        ax_midi = fig.add_subplot(gs[1], sharex=ax_phonemes)  # MIDI notes
+        ax_f0 = fig.add_subplot(gs[2], sharex=ax_phonemes)  # F0 contour
+        ax_mel = fig.add_subplot(gs[3], sharex=ax_phonemes)  # Mel spectrogram at bottom
+        
+        # Get phoneme text labels
         phone_text = [self.id_to_phone[p] for p in phonemes]
-        step = max(1, len(phonemes) // 50)
-        axs[0].plot(range(len(phonemes)), phonemes, 'bo-', alpha=0.5)
-        for i in range(0, len(phonemes), step):
-            axs[0].text(i, phonemes[i], phone_text[i], fontsize=8)
-        axs[0].set_ylabel('Phoneme')
-        axs[0].set_title(f'Alignment for {filename}')
         
-        # Plot MIDI notes
-        axs[1].plot(midi, 'ro-', alpha=0.5)
-        axs[1].set_ylabel('MIDI')
+        # Find phoneme boundaries
+        boundaries = [0]  # Start with the first frame
+        for i in range(1, len(phonemes)):
+            if phonemes[i] != phonemes[i-1]:
+                boundaries.append(i)
+        boundaries.append(len(phonemes))  # Add the end frame
+        
+        # Draw colored regions for each phoneme
+        cmap = plt.cm.get_cmap('tab20', len(boundaries) - 1)
+        
+        for i in range(len(boundaries) - 1):
+            start = boundaries[i]
+            end = boundaries[i+1]
+            # Fill region for this phoneme
+            ax_phonemes.axvspan(start, end, color=cmap(i), alpha=0.7)
+            # Add phoneme label
+            midpoint = (start + end) // 2
+            phone = phone_text[start]
+            ax_phonemes.text(midpoint, 0.5, phone, 
+                            horizontalalignment='center',
+                            verticalalignment='center',
+                            fontweight='bold')
+        
+        # Remove y ticks and spines for phoneme plot
+        ax_phonemes.set_yticks([])
+        for spine in ax_phonemes.spines.values():
+            spine.set_visible(False)
+        ax_phonemes.set_ylabel('Phoneme')
+        
+        # Plot MIDI notes with vertical lines at changes
+        ax_midi.plot(midi, 'b-', linewidth=2)
+        ax_midi.set_ylabel('MIDI Note')
+        
+        # Add vertical lines at MIDI note changes
+        midi_changes = [0]
+        for i in range(1, len(midi)):
+            if abs(midi[i] - midi[i-1]) > 0.5:  # Threshold for significant change
+                midi_changes.append(i)
+                ax_midi.axvline(x=i, color='b', linestyle='--', alpha=0.3)
         
         # Plot F0 contour
-        axs[2].plot(f0, 'go-', alpha=0.5)
-        axs[2].set_ylabel('F0 (Hz)')
+        ax_f0.plot(f0, 'r-', linewidth=2)
+        ax_f0.set_ylabel('F0 (Hz)')
         
         # Plot mel spectrogram
-        im = axs[3].imshow(mel_spec.T, aspect='auto', origin='lower')
-        axs[3].set_ylabel('Mel bins')
-        axs[3].set_xlabel('Frames')
-        fig.colorbar(im, ax=axs[3])
+        im = ax_mel.imshow(mel_spec.T, aspect='auto', origin='lower', cmap='viridis')
+        ax_mel.set_ylabel('Mel Bins')
+        ax_mel.set_xlabel('Frames')
+        
+        # Add vertical lines at phoneme boundaries to all plots for alignment analysis
+        for boundary in boundaries[1:-1]:  # Skip first and last
+            ax_midi.axvline(x=boundary, color='k', linestyle='-', alpha=0.7)
+            ax_f0.axvline(x=boundary, color='k', linestyle='-', alpha=0.7)
+            ax_mel.axvline(x=boundary, color='w', linestyle='-', alpha=0.7)
+        
+        # Analyze alignment quality
+        alignment_scores = []
+        
+        for boundary in boundaries[1:-1]:  # Skip first and last
+            window = 3  # frames to check on each side
+            start = max(0, boundary - window)
+            end = min(len(midi) - 1, boundary + window)
+            
+            # Check if there's a significant MIDI change near this boundary
+            midi_change = max(midi[start:end]) - min(midi[start:end])
+            # Check if there's a significant F0 change near this boundary
+            f0_change = max(f0[start:end]) - min(f0[start:end])
+            
+            # Score this boundary's alignment (0-1)
+            score = 0
+            if midi_change > 1:  # Significant MIDI change
+                score += 0.5
+                # Highlight good alignment
+                ax_midi.axvspan(boundary-1, boundary+1, color='g', alpha=0.3)
+            
+            if f0_change > 10:  # Significant F0 change
+                score += 0.5
+                # Highlight good alignment
+                ax_f0.axvspan(boundary-1, boundary+1, color='g', alpha=0.3)
+            
+            alignment_scores.append(score)
+            
+            # Highlight potential misalignments
+            if score < 0.5:
+                ax_midi.axvspan(boundary-1, boundary+1, color='y', alpha=0.3)
+                ax_f0.axvspan(boundary-1, boundary+1, color='y', alpha=0.3)
+                ax_mel.axvspan(boundary-1, boundary+1, color='y', alpha=0.3)
+        
+        # Calculate overall alignment quality
+        alignment_percentage = 100 * sum(alignment_scores) / max(1, len(alignment_scores))
+        
+        # Add title with alignment quality
+        quality_label = "Good" if alignment_percentage > 70 else "Moderate" if alignment_percentage > 40 else "Poor"
+        fig.suptitle(f'Alignment Analysis for {filename}\n'
+                    f'Alignment Quality: {quality_label} ({alignment_percentage:.1f}%)', 
+                    fontsize=14)
+        
+        # Ensure all x-axes show the same range
+        for ax in [ax_phonemes, ax_midi, ax_f0, ax_mel]:
+            ax.set_xlim(0, len(phonemes))
+        
+        # Hide x-tick labels for all but the bottom plot
+        for ax in [ax_phonemes, ax_midi, ax_f0]:
+            plt.setp(ax.get_xticklabels(), visible=False)
         
         plt.tight_layout()
-        plt.savefig(f"{filename}_alignment.png")
+        fig.subplots_adjust(top=0.93)  # Make room for suptitle
+        plt.savefig(f"{filename}_alignment.png", dpi=150)
         plt.close()
         
         return f"{filename}_alignment.png"
