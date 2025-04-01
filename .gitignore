@@ -10,3 +10,4 @@ miniS2S/logs
 miniFFT/__pycache__
 miniFFT/datasets
 miniFFT/logs
+__pycache__
