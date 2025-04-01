@@ -39,6 +39,13 @@ class Encoder(nn.Module):
         self.logvar = nn.Linear(hidden_dim * 2, latent_dim)
     
     def forward(self, phonemes, midi, f0, lengths):
+        # Ensure inputs are on the same device as the model
+        device = next(self.parameters()).device
+        phonemes = phonemes.to(device)
+        midi = midi.to(device)
+        f0 = f0.to(device)
+        lengths = lengths.to(device)
+        
         # Get embeddings
         phone_embed = self.phoneme_embedding(phonemes)
         pitch_embed = self.pitch_embedding(midi)
@@ -240,12 +247,22 @@ class SVSModelLightning(pl.LightningModule):
     
     def reparameterize(self, mean, logvar):
         """Reparameterization trick for VAE."""
+        # Ensure tensors are on the correct device
+        mean = mean.to(self.device)
+        logvar = logvar.to(self.device)
+        
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
+        eps = torch.randn_like(std).to(self.device)
         return mean + eps * std
     
     def forward(self, phonemes, midi, f0, lengths, teacher_forcing_ratio=0):
         """Full model forward pass."""
+        # Ensure all tensors are on the model's device
+        phonemes = phonemes.to(self.device)
+        midi = midi.to(self.device)
+        f0 = f0.to(self.device)
+        lengths = lengths.to(self.device)
+        
         # Update phoneme vocabulary if needed
         self.update_model_phonemes(phonemes.max().item() + 1)
         
@@ -261,13 +278,13 @@ class SVSModelLightning(pl.LightningModule):
         return decoder_outputs, postnet_outputs, z_mean, z_logvar
     
     def training_step(self, batch, batch_idx):
-        # Get batch data
-        phonemes = batch['phonemes']
-        midi = batch['midi']
-        f0 = batch['f0']
-        mel_gt = batch['mel_spectrogram']
-        lengths = batch['lengths']
-        mask = batch['mask']
+        # Get batch data and move to the model's device
+        phonemes = batch['phonemes'].to(self.device)
+        midi = batch['midi'].to(self.device)
+        f0 = batch['f0'].to(self.device)
+        mel_gt = batch['mel_spectrogram'].to(self.device)
+        lengths = batch['lengths'].to(self.device)
+        mask = batch['mask'].to(self.device)
         
         # Forward pass with teacher forcing during training
         decoder_outputs, postnet_outputs, z_mean, z_logvar = self(
@@ -306,13 +323,13 @@ class SVSModelLightning(pl.LightningModule):
             ) / self.kl_annealing_epochs
     
     def validation_step(self, batch, batch_idx):
-        # Get batch data
-        phonemes = batch['phonemes']
-        midi = batch['midi']
-        f0 = batch['f0']
-        mel_gt = batch['mel_spectrogram']
-        lengths = batch['lengths']
-        mask = batch['mask']
+        # Get batch data and move to the model's device
+        phonemes = batch['phonemes'].to(self.device)
+        midi = batch['midi'].to(self.device)
+        f0 = batch['f0'].to(self.device)
+        mel_gt = batch['mel_spectrogram'].to(self.device)
+        lengths = batch['lengths'].to(self.device)
+        mask = batch['mask'].to(self.device)
         
         # Forward pass without teacher forcing
         decoder_outputs, postnet_outputs, z_mean, z_logvar = self(
