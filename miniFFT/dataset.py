@@ -360,25 +360,29 @@ class SVSDataModule(pl.LightningDataModule):
              self.dataset_val = HDF5Dataset(sample_ids=self.val_ids, **common_args)
         # Add stage == 'predict' if needed
 
+    def _collate_wrapper(self, batch):
+        """Wrapper for collate_fn that can be properly pickled."""
+        return collate_fn(batch, self.pad_phoneme_id)
+    
     def train_dataloader(self):
         return DataLoader(
             self.dataset_train,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=lambda batch: collate_fn(batch, self.pad_phoneme_id),
-            pin_memory=True, # Usually good with GPUs
-            persistent_workers=self.num_workers > 0, # Faster startup after first epoch
-            drop_last=True # Avoid tiny batches at the end
+            collate_fn=self._collate_wrapper,  # Use class method instead of lambda
+            pin_memory=True,
+            persistent_workers=self.num_workers > 0,
+            drop_last=True
         )
 
     def val_dataloader(self):
         return DataLoader(
             self.dataset_val,
-            batch_size=self.batch_size, # Can often use larger batch size for validation
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=lambda batch: collate_fn(batch, self.pad_phoneme_id),
+            collate_fn=self._collate_wrapper,  # Use class method instead of lambda
             pin_memory=True,
             persistent_workers=self.num_workers > 0,
             drop_last=False
