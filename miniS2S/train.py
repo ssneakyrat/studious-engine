@@ -104,8 +104,7 @@ def main():
         accumulate_grad_batches=1,  # Adjust if needed
         check_val_every_n_epoch=1,
         num_sanity_val_steps=2,
-        benchmark=True,
-        log_gpu_memory="min_max"
+        benchmark=True
     )
     
     # Train model

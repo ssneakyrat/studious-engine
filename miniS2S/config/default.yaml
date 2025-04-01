@@ -71,7 +71,7 @@ model:
 
 # Training parameters
 training:
-  batch_size: 16             # Batch size
+  batch_size: 8             # Batch size
   max_epochs: 10           # Maximum number of epochs
   learning_rate: 0.001       # Initial learning rate
   weight_decay: 0.0001       # L2 regularization

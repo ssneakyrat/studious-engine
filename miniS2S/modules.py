@@ -558,11 +558,11 @@ class DecoderRNN(nn.Module):
         return output, stop_token, next_hidden_states, next_cell_states, context, attention_weights
     
     def forward(self, 
-            memory: torch.Tensor,
-            max_decoder_steps: int = 1000,
-            teacher_forcing_ratio: float = 1.0,
-            target: Optional[torch.Tensor] = None,
-            memory_lengths: Optional[torch.Tensor] = None) -> Tuple:
+        memory: torch.Tensor,
+        max_decoder_steps: int = 1000,
+        teacher_forcing_ratio: float = 1.0,
+        target: Optional[torch.Tensor] = None,
+        memory_lengths: Optional[torch.Tensor] = None) -> Tuple:
         """
         Forward pass for the decoder.
         
@@ -596,11 +596,15 @@ class DecoderRNN(nn.Module):
         # Determine target length
         if target is not None:
             target_length = target.size(1)
+            # Use target length as the maximum steps if teacher forcing
+            # Ensure we don't exceed target length when using teacher forcing
+            if teacher_forcing_ratio > 0:
+                max_steps = target_length
+            else:
+                max_steps = max(max_decoder_steps, target_length)
         else:
             target_length = 0
-        
-        # Maximum number of steps
-        max_steps = max(max_decoder_steps, target_length)
+            max_steps = max_decoder_steps
         
         # Initialize output tensors
         outputs = []

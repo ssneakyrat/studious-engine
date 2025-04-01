@@ -114,12 +114,12 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
         )
     
     def forward(self, 
-                phoneme_ids: torch.Tensor,
-                musical_features: torch.Tensor,
-                mel_lengths: torch.Tensor,
-                max_decoder_steps: int = 1000,
-                teacher_forcing_ratio: float = 1.0,
-                target_mel: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+            phoneme_ids: torch.Tensor,
+            musical_features: torch.Tensor,
+            mel_lengths: torch.Tensor,
+            max_decoder_steps: int = 1000,
+            teacher_forcing_ratio: float = 1.0,
+            target_mel: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the model.
         
@@ -148,10 +148,19 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
         # Fuse features
         encoder_outputs = self.feature_fusion(phoneme_features, musical_features_encoded)
         
+        # Set the max_decoder_steps based on the target length when using teacher forcing
+        # This ensures we don't generate more frames than necessary
+        if target_mel is not None and teacher_forcing_ratio > 0:
+            target_max_len = target_mel.size(1)
+            # Use the target length as the maximum steps when teacher forcing is used
+            effective_max_steps = target_max_len
+        else:
+            effective_max_steps = max_decoder_steps
+        
         # Decode mel spectrogram
         mel_outputs, stop_tokens, alignments = self.decoder(
             memory=encoder_outputs,
-            max_decoder_steps=max_decoder_steps,
+            max_decoder_steps=effective_max_steps,
             teacher_forcing_ratio=teacher_forcing_ratio,
             target=target_mel,
             memory_lengths=mel_lengths
@@ -188,21 +197,53 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
             if length < target_stop.size(1):
                 target_stop[i, length-1:] = 1.0
         
-        # Calculate mel loss
-        mel_loss = F.l1_loss(outputs['mel_outputs'], target_mel)
-        mel_postnet_loss = F.l1_loss(outputs['mel_outputs_postnet'], target_mel)
+        # Adjust output or target shapes to match if needed
+        output_seq_len = outputs['mel_outputs'].size(1)
+        target_seq_len = target_mel.size(1)
+        
+        if output_seq_len > target_seq_len:
+            # Truncate outputs to match target length
+            mel_outputs = outputs['mel_outputs'][:, :target_seq_len, :]
+            mel_outputs_postnet = outputs['mel_outputs_postnet'][:, :target_seq_len, :]
+            stop_tokens = outputs['stop_tokens'][:, :target_seq_len, :]
+        elif output_seq_len < target_seq_len:
+            # This shouldn't typically happen with teacher forcing, but handle it anyway
+            # Truncate targets to match output length
+            print(f"Warning: Output length ({output_seq_len}) is less than target length ({target_seq_len}). This is unexpected.")
+            target_mel = target_mel[:, :output_seq_len, :]
+            # Adjust target_stop as well if it was already created based on target_mel
+            if target_stop.size(1) > output_seq_len:
+                target_stop = target_stop[:, :output_seq_len, :]
+            mel_outputs = outputs['mel_outputs']
+            mel_outputs_postnet = outputs['mel_outputs_postnet']
+            stop_tokens = outputs['stop_tokens']
+        else:
+            # Lengths already match
+            mel_outputs = outputs['mel_outputs']
+            mel_outputs_postnet = outputs['mel_outputs_postnet']
+            stop_tokens = outputs['stop_tokens']
+        
+        # Calculate mel loss with correctly sized tensors
+        mel_loss = F.l1_loss(mel_outputs, target_mel)
+        mel_postnet_loss = F.l1_loss(mel_outputs_postnet, target_mel)
         
         # Calculate stop token loss
         stop_loss = F.binary_cross_entropy_with_logits(
-            outputs['stop_tokens'].squeeze(-1),
+            stop_tokens.squeeze(-1),
             target_stop.squeeze(-1)
         )
         
         # Calculate guided attention loss if enabled
         guided_attn_loss = 0.0
         if self.guided_attention_weight > 0:
+            # Adjust alignments as well if needed
+            if output_seq_len != target_seq_len and 'alignments' in outputs:
+                alignments = outputs['alignments'][:, :min(output_seq_len, target_seq_len), :]
+            else:
+                alignments = outputs['alignments']
+                
             guided_attn_loss = self.guided_attention_loss(
-                attention_weights=outputs['alignments'],
+                attention_weights=alignments,
                 mel_lengths=mel_lengths,
                 memory_lengths=mel_lengths  # Assuming encoder and decoder lengths are the same
             )
