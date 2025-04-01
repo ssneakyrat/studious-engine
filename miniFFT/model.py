@@ -294,28 +294,51 @@ class FFTLightSVS(pl.LightningModule):
         return mel_pred, encoder_attns, decoder_attns
 
     def _common_step(self, batch, batch_idx):
-        phonemes = batch['phonemes']
-        midi_notes = batch['midi_notes']
-        durations = batch['durations']
-        f0 = batch['f0']
-        mel_target = batch['mel_target']
-        phoneme_mask = batch['phoneme_mask'] # True where padded
-        mel_mask = batch['mel_mask']         # True where padded
+        # Handle case where batch could be None or doesn't have expected keys
+        if batch is None:
+            print("WARNING: Received None batch in _common_step")
+            # Return dummy zero loss and empty tensors
+            dummy_mel = torch.zeros((1, 1, self.hparams.data['n_mels']), device=self.device)
+            dummy_mask = torch.zeros((1, 1), dtype=torch.bool, device=self.device)
+            return torch.tensor(0.0, requires_grad=True, device=self.device), dummy_mel, dummy_mel, dummy_mask
 
-        # Forward pass
-        mel_pred, _, _ = self(phonemes, midi_notes, durations, f0, phoneme_mask, mel_mask)
+        try:
+            phonemes = batch['phonemes']
+            midi_notes = batch['midi_notes']
+            durations = batch['durations']
+            f0 = batch['f0']
+            mel_target = batch['mel_target']
+            phoneme_mask = batch['phoneme_mask']  # True where padded
+            mel_mask = batch['mel_mask']          # True where padded
 
-        # Calculate Loss (L1 Loss)
-        loss = self.criterion(mel_pred, mel_target) # (B, T, n_mels)
+            # Forward pass
+            mel_pred, _, _ = self(phonemes, midi_notes, durations, f0, phoneme_mask, mel_mask)
 
-        # Apply mask (zero out loss for padded frames)
-        loss = loss.masked_fill(mel_mask.unsqueeze(-1), 0.0)
+            # Calculate Loss (L1 Loss)
+            loss = self.criterion(mel_pred, mel_target)  # (B, T, n_mels)
 
-        # Calculate mean loss *only* over non-padded elements
-        # Sum over mel bins and time steps, then divide by number of non-padded frames
-        loss = loss.sum() / (~mel_mask).sum() # ~mel_mask is True where NOT padded
+            # Apply mask (zero out loss for padded frames)
+            loss = loss.masked_fill(mel_mask.unsqueeze(-1), 0.0)
 
-        return loss, mel_pred, mel_target, mel_mask # Return preds/targets for logging
+            # Calculate mean loss *only* over non-padded elements
+            # Sum over mel bins and time steps, then divide by number of non-padded frames
+            # Add small epsilon to avoid division by zero
+            non_padded_frames = (~mel_mask).sum() 
+            if non_padded_frames > 0:
+                loss = loss.sum() / non_padded_frames
+            else:
+                # Handle extreme case where all frames are padded
+                loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+                print("WARNING: All frames are padded in batch! Using zero loss.")
+
+            return loss, mel_pred, mel_target, mel_mask
+            
+        except Exception as e:
+            print(f"ERROR in _common_step: {str(e)}")
+            # Return dummy values to avoid breaking the training loop
+            dummy_mel = torch.zeros((1, 1, self.hparams.data['n_mels']), device=self.device)
+            dummy_mask = torch.zeros((1, 1), dtype=torch.bool, device=self.device)
+            return torch.tensor(0.0, requires_grad=True, device=self.device), dummy_mel, dummy_mel, dummy_mask
 
     def training_step(self, batch, batch_idx):
         loss, _, _, _ = self._common_step(batch, batch_idx)

@@ -150,6 +150,7 @@ def main(args):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
+    # Load the model checkpoint
     model = FFTLightSVS.load_from_checkpoint(args.checkpoint_path, config_path=config_path)
     print(f"Loaded model from {args.checkpoint_path}")
 
@@ -159,8 +160,12 @@ def main(args):
     # --- Setup Data ---
     # Use the validation set for testing modules
     data_module = SVSDataModule(config_path=config_path)
+    
+    # Build the phone map first
+    data_module.prepare_data()
     data_module.setup('validate') # Prepare validation dataset
     val_dataset = data_module.val_dataset
+    
     if not val_dataset:
          print("Error: Could not load validation dataset.")
          return

@@ -13,9 +13,23 @@ def main(args):
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # --- Initialize DataModule and Model ---
+    # --- Initialize DataModule ---
     data_module = SVSDataModule(config_path=args.config)
+    
+    # --- Setup initial preparation ---
+    # This will ensure the phone map is created before model initialization
+    data_module.prepare_data()
+    data_module.setup('fit')
+    
+    # --- Initialize Model ---
+    # Use the same updated config from the data module to avoid conflicts
     model = FFTLightSVS(config_path=args.config)
+    
+    # Make sure model's config reflects latest phoneme_vocab_size from data_module
+    model.hparams.data['phoneme_vocab_size'] = data_module.config['data']['phoneme_vocab_size']
+    
+    # Print phoneme vocabulary size
+    print(f"Training with phoneme vocabulary size: {model.hparams.data['phoneme_vocab_size']}")
 
     # --- Setup Logging ---
     log_dir = "logs/"

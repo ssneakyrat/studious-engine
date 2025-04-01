@@ -6,12 +6,14 @@ data:
   n_mels: 80
   sample_rate: 22050
   hop_length: 256
-  # Phoneme & MIDI details (Adjust based on your actual data)
-  phoneme_vocab_size: 50  # Number of unique phonemes + padding token
+  # Phoneme & MIDI details
+  phoneme_vocab_size: 50  # This will be updated dynamically based on actual vocabulary
   midi_range: 88        # Number of unique MIDI notes + padding token
   pad_token_id: 0       # Assuming 0 is used for padding phonemes/midi
   f0_pad_value: 0.0     # Padding value for F0
   mel_pad_value: -11.5  # Approx log-mel silence value, adjust if needed
+  # Added for phone map
+  use_phone_map: true   # Whether to use dynamically generated phone map
 
 model:
   # Core dimensions
@@ -38,7 +40,7 @@ training:
   adam_eps: 1e-9
   weight_decay: 0.01      # AdamW weight decay for regularization
   lr_warmup_steps: 4000   # Steps for linear learning rate warmup. Helps stabilize early training.
-  max_epochs: 100         # Total training epochs. Adjust based on convergence.
+  max_epochs: 10         # Total training epochs. Adjust based on convergence.
   num_workers: 4          # DataLoader workers. Depends on CPU cores. Set to 0 for debugging.
   max_seq_len_frames: 300 # CRITICAL VRAM CONTROL. Max Mel frames (~3.5 sec @ 86fps). Longer sequences EXHAUST 12GB VRAM quickly.
   grad_clip_val: 1.0      # Gradient clipping to prevent explosions.
