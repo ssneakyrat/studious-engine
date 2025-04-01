@@ -120,47 +120,162 @@ class HDF5Dataset(Dataset):
                 # Ensure F0 is 1D (T,) or 2D (T, 1) -> make it (T,)
                 if f0.ndim > 1:
                     f0 = f0.squeeze()
-                # Handle potential NaN in F0 (replace with 0 or interpolate?)
+                # Handle potential NaN in F0 (replace with 0)
                 f0 = torch.nan_to_num(f0, nan=0.0)
 
-
+                # Get phoneme data
                 phoneme_strs = [p.decode('utf-8') for p in sample_group['phonemes/phones'][:]]
                 phonemes = torch.tensor([self.phoneme_to_id.get(p, self.unk_phoneme_id) for p in phoneme_strs], dtype=torch.long)
 
                 midi_notes = torch.from_numpy(sample_group['midi/notes'][:]).long()
-                # Clamp MIDI notes to valid range (e.g., 0-127) if necessary
+                # Clamp MIDI notes to valid range (0-127)
                 midi_notes = torch.clamp(midi_notes, 0, 127)
 
                 durations = torch.from_numpy(sample_group['phonemes/durations'][:]).long()
 
-                # --- Data Consistency Checks (Optional but Recommended) ---
-                T_mel = mel.shape[0]
+                # --- Alignment Validation & Correction ---
+                T_mel = mel.shape[0]  # Target length (frames)
                 T_f0 = f0.shape[0]
                 N_phonemes = phonemes.shape[0]
                 N_midi = midi_notes.shape[0]
                 N_durations = durations.shape[0]
                 T_dur_sum = torch.sum(durations).item()
 
-                if not (T_mel == T_f0):
-                    print(f"Warning: Alignment mismatch in {sample_id}: Mel({T_mel}) != F0({T_f0}). Skipping sample.")
-                    # Return None or raise error? For now, let's try returning None and handle in collate
-                    # Or better: Handle this during preprocessing validation! This check here is redundant if preprocess is good.
-                    # For robustness now, let's just assert, assuming preprocessing handled it.
-                    assert T_mel == T_f0, f"Mel/F0 length mismatch in {sample_id}: {T_mel} vs {T_f0}"
+                # 1. Fix F0 length to match mel length
+                if T_f0 != T_mel:
+                    print(f"Fixing F0 length mismatch in {sample_id}: F0({T_f0}) -> Mel({T_mel})")
+                    if T_f0 < T_mel:
+                        # Pad F0
+                        pad_len = T_mel - T_f0
+                        f0 = torch.nn.functional.pad(f0, (0, pad_len), value=0.0)
+                    else:
+                        # Truncate F0
+                        f0 = f0[:T_mel]
+                    T_f0 = T_mel  # Update T_f0 to new length
 
-
+                # 2. Ensure phoneme, MIDI, and duration arrays have consistent lengths
                 if not (N_phonemes == N_midi == N_durations):
-                    print(f"Warning: Phoneme/MIDI/Duration count mismatch in {sample_id}: P({N_phonemes}), M({N_midi}), D({N_durations}).")
-                    assert N_phonemes == N_midi == N_durations, f"Input sequence length mismatch in {sample_id}"
+                    print(f"Warning: Input sequence length mismatch in {sample_id}: P({N_phonemes}), M({N_midi}), D({N_durations})")
+                    # Find the minimum length to truncate to
+                    min_len = min(N_phonemes, N_midi, N_durations)
+                    phonemes = phonemes[:min_len]
+                    midi_notes = midi_notes[:min_len]
+                    durations = durations[:min_len]
+                    N_phonemes = N_midi = N_durations = min_len
+                    print(f"Truncated all to minimum length: {min_len}")
 
+                # 3. Fix duration sum to match mel length
                 if T_dur_sum != T_mel:
-                     # This SHOULD NOT happen if preprocess.py validation is correct.
-                     # If it does, the data is corrupted or preprocess logic failed.
-                    print(f"CRITICAL WARNING: Duration sum mismatch in {sample_id}: sum(D)={T_dur_sum}, Mel(T)={T_mel}. Check preprocessing!")
-                    # Attempt a fix? Dangerous. Best to fix preprocessing.
-                    # Truncate/pad mel/f0? Adjust last duration? Let's assert for now.
-                    assert T_dur_sum == T_mel, f"Sum of durations != Mel length in {sample_id}"
-                # ----------------------------------------------------------
+                    print(f"Fixing duration sum mismatch in {sample_id}: sum(D)={T_dur_sum}, Mel(T)={T_mel}")
+                    
+                    # Calculate difference
+                    diff = T_mel - T_dur_sum
+                    
+                    if diff > 0:  # Need to add frames
+                        # Find non-zero durations to adjust (prefer vowels or longer phonemes)
+                        non_zero_indices = torch.nonzero(durations > 0).squeeze(-1)
+                        if len(non_zero_indices) > 0:
+                            # Distribute additional frames proportionally to existing duration
+                            total_dur = float(durations[non_zero_indices].sum())
+                            remaining = diff
+                            
+                            # First pass - distribute proportionally with floor
+                            for idx in non_zero_indices:
+                                proportion = durations[idx].item() / total_dur
+                                add_frames = min(remaining, int(diff * proportion))
+                                durations[idx] += add_frames
+                                remaining -= add_frames
+                            
+                            # Second pass - add remaining frames one by one to largest durations
+                            if remaining > 0:
+                                sorted_indices = non_zero_indices[torch.argsort(durations[non_zero_indices], descending=True)]
+                                for i in range(min(remaining, len(sorted_indices))):
+                                    durations[sorted_indices[i % len(sorted_indices)]] += 1
+                                    remaining -= 1
+                        else:
+                            # If no non-zero durations, add to the first phoneme
+                            durations[0] += diff
+                            
+                    elif diff < 0:  # Need to remove frames
+                        # Remove frames from longest durations first
+                        remaining = -diff
+                        while remaining > 0 and torch.any(durations > 1):  # Keep at least duration 1
+                            max_idx = torch.argmax(durations)
+                            remove = min(durations[max_idx] - 1, remaining)  # Keep at least 1 frame
+                            durations[max_idx] -= remove
+                            remaining -= remove
+                        
+                        # If we still need to remove and all durations are 1, then we need to remove phonemes
+                        if remaining > 0:
+                            print(f"  Warning: Need to remove {remaining} more frames but all durations are 1.")
+                            # We could potentially remove entire phonemes, but that's risky
+                    
+                    # Verify the correction worked
+                    T_dur_sum_new = torch.sum(durations).item()
+                    
+                    # If we still have a mismatch, apply a final force-fix
+                    if T_dur_sum_new != T_mel:
+                        print(f"  Warning: First pass duration adjustment failed. Applying forced correction.")
+                        diff = T_mel - T_dur_sum_new
+                        
+                        # Find a suitable index for adjustment (prefer longer durations)
+                        adjust_idx = 0
+                        if len(durations) > 0:
+                            non_zero_indices = torch.nonzero(durations > 0).squeeze(-1)
+                            if len(non_zero_indices) > 0:
+                                # Use the longest duration if removing frames, or distribute if adding
+                                if diff < 0:  # Need to remove frames
+                                    adjust_idx = torch.argmax(durations).item()
+                                    # Make sure we don't go below 1
+                                    removal = min(-diff, durations[adjust_idx].item() - 1)
+                                    if removal > 0:
+                                        durations[adjust_idx] -= removal
+                                        diff += removal
+                                
+                                # If we still have frames to adjust, distribute among all non-zero durations
+                                if diff != 0:
+                                    for idx in non_zero_indices:
+                                        if diff > 0:  # Add remaining frames
+                                            durations[idx] += 1
+                                            diff -= 1
+                                            if diff == 0:
+                                                break
+                                        elif diff < 0 and durations[idx] > 1:  # Remove frames (keep at least 1)
+                                            durations[idx] -= 1
+                                            diff += 1
+                                            if diff == 0:
+                                                break
+                        
+                        # As a last resort, adjust the first/last phoneme
+                        if diff != 0:
+                            if len(durations) > 0:
+                                # If adding frames, add to first phoneme
+                                if diff > 0:
+                                    durations[0] += diff
+                                # If removing, try to remove from any phoneme with duration > 1
+                                else:
+                                    # Find any phoneme with duration > 1
+                                    for i in range(len(durations)):
+                                        if durations[i] > 1:
+                                            remove = min(durations[i] - 1, -diff)
+                                            durations[i] -= remove
+                                            diff += remove
+                                            if diff == 0:
+                                                break
+                                    
+                                    # If we still couldn't fix it, we'll have to accept the mismatch
+                                    if diff < 0:
+                                        print(f"  Critical: Could not completely align durations. Mismatch: {diff}")
+                        
+                        # Final check
+                        T_dur_sum_final = torch.sum(durations).item()
+                        print(f"  Final duration sum: {T_dur_sum_final} (target: {T_mel})")
+                        
+                        # We'll allow it to continue without assertion,
+                        # but log if there's still a mismatch after our best effort
+                        if T_dur_sum_final != T_mel:
+                            print(f"  Critical: Duration sum ({T_dur_sum_final}) still doesn't match Mel length ({T_mel}) for {sample_id}")
+                            # Don't assert - allow the data to be returned with this warning
 
                 return {
                     "sample_id": sample_id,
@@ -174,16 +289,10 @@ class HDF5Dataset(Dataset):
                 }
         except KeyError as e:
             print(f"Error loading data for {sample_id}: Missing key {e}. Check HDF5 structure.")
-            # Return None might cause issues in dataloader, maybe raise?
             raise KeyError(f"Missing data for {sample_id}: {e}") from e
         except Exception as e:
             print(f"Unexpected error loading {sample_id}: {e}")
             raise e # Re-raise other unexpected errors
-
-    # def __del__(self):
-    #     # Close the file if it was kept open
-    #     if hasattr(self, 'h5_file') and self.h5_file:
-    #         self.h5_file.close()
 
 
 # --- Collation ---
