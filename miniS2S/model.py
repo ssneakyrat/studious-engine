@@ -274,6 +274,15 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
         Returns:
             Loss dictionary
         """
+
+        # Calculate current epoch fraction (0 to 1 scale over training)
+        current_epoch = self.current_epoch
+        max_epochs = self.trainer.max_epochs
+        progress = min(1.0, current_epoch / (max_epochs * 0.5))  # Anneal over first half
+        
+        # Reduce guided attention weight over time
+        effective_guided_attention_weight = self.guided_attention_weight * (1.0 - progress)
+
         # Forward pass with teacher forcing
         outputs = self.forward(
             phoneme_ids=batch['phoneme_ids'],
@@ -461,7 +470,7 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
             lr=lr,
             weight_decay=weight_decay
         )
-        
+                        
         # Create scheduler
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -469,7 +478,7 @@ class SingingVoiceSynthesisModel(pl.LightningModule):
                 mode='min',
                 factor=self.config['training']['lr_scheduler']['plateau_factor'],
                 patience=self.config['training']['lr_scheduler']['plateau_patience'],
-                verbose=True
+                verbose=True,
             ),
             'monitor': 'val_loss',
             'interval': 'epoch',

@@ -72,23 +72,23 @@ model:
 # Training parameters
 training:
   batch_size: 8             # Batch size
-  max_epochs: 10           # Maximum number of epochs
+  max_epochs: 1000           # Maximum number of epochs
   learning_rate: 0.001       # Initial learning rate
-  weight_decay: 0.0001       # L2 regularization
+  weight_decay: 0.0002 #0.0001       # L2 regularization
   grad_clip_thresh: 1.0      # Gradient clipping threshold
   lr_scheduler:
     warmup_epochs: 10        # Number of warmup epochs
-    plateau_patience: 5      # Patience for plateau learning rate scheduler
+    plateau_patience: 1 #5      # Patience for plateau learning rate scheduler
     plateau_factor: 0.5      # Factor by which to reduce learning rate
   early_stopping:
-    patience: 15             # Early stopping patience
+    patience: 10             # Early stopping patience
     min_delta: 0.0001        # Minimum delta for early stopping
   
   # Loss weights
   loss:
     mel_loss_weight: 1.0     # Weight for mel spectrogram L1 loss
     stop_token_weight: 0.25  # Weight for stop token binary cross entropy loss
-    guided_attention_weight: 0.2  # Weight for guided attention loss (optional)
+    guided_attention_weight: 0 #0.2  # Weight for guided attention loss (optional)
 
 # Data loading
 dataloader:

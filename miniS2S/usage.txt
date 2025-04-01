@@ -1,1 +1,2 @@
 D:/ML/pinokio/bin/miniconda/envs/MLLM/python.exe d:/work/personal/ML/studious-engine/miniS2S/validate_module.py --module dataset
+D:/ML/pinokio/bin/miniconda/envs/MLLM/python.exe d:/work/personal/ML/studious-engine/miniS2S/train.py --checkpoint logs\singing_voice_synthesis\version_0\checkpoints\last.ckpt --name continued_training

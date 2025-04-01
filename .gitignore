@@ -7,3 +7,6 @@ miniCVAE/requirements.txt
 miniS2S/__pycache__
 miniS2S/datasets
 miniS2S/logs
+miniFFT/__pycache__
+miniFFT/datasets
+miniFFT/logs
