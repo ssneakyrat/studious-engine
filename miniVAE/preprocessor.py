@@ -280,7 +280,7 @@ class SVSPreprocessor:
         num_frames: int
     ) -> Tuple[List[int], np.ndarray]:
         """
-        Align phonemes with MIDI notes, ensuring 1:1 mapping.
+        Align phonemes with MIDI notes, ensuring 1:1 mapping by scaling phoneme durations.
         Each phoneme gets assigned one MIDI note for its entire duration.
         
         Args:
@@ -294,47 +294,87 @@ class SVSPreprocessor:
             frame_phonemes: List of phoneme IDs for each frame
             frame_midi: List of MIDI notes for each frame
         """
-        # Calculate frame timestamps
-        frame_times = librosa.frames_to_time(
-            np.arange(num_frames),
-            sr=self.sample_rate,
-            hop_length=self.hop_length
-        )
+        # Calculate total duration of phoneme sequence
+        total_phoneme_duration = end_times[-1] - start_times[0]
         
-        # Initialize with padding token
+        # Calculate scaling factor to map phoneme time to mel frames
+        frames_per_second = num_frames / total_phoneme_duration
+        
+        # Initialize output arrays
         frame_phonemes = [0] * num_frames
         frame_midi = np.zeros(num_frames, dtype=np.int16)
         
-        # For each phoneme, determine the average F0 over its duration
-        # and assign that as a single MIDI note for the entire phoneme
+        # Track current frame position
+        current_frame = 0
+        
+        # Process each phoneme
         for i, (phoneme, start, end) in enumerate(zip(phonemes, start_times, end_times)):
-            # Find frames that fall within this phoneme's duration
-            phoneme_frames = []
-            for j, frame_time in enumerate(frame_times):
-                if start <= frame_time < end:
-                    phoneme_frames.append(j)
+            # Calculate frames for this phoneme based on its duration
+            phoneme_duration = end - start
+            phoneme_frames = round(phoneme_duration * frames_per_second)
             
-            if not phoneme_frames:
-                continue  # Skip empty segments
+            # Ensure we don't exceed the mel length (handle last phoneme specially)
+            if i == len(phonemes) - 1:
+                phoneme_frames = num_frames - current_frame
+            elif current_frame + phoneme_frames > num_frames:
+                phoneme_frames = num_frames - current_frame
+                
+            # Skip if no frames (can happen due to rounding)
+            if phoneme_frames <= 0:
+                continue
+                
+            # Get frame range for this phoneme
+            frame_range = range(current_frame, current_frame + phoneme_frames)
             
             # Assign phoneme ID to all frames in this segment
             phoneme_id = self.phone_to_id.get(phoneme, 1)  # 1 is <UNK>
-            for frame_idx in phoneme_frames:
+            for frame_idx in frame_range:
                 frame_phonemes[frame_idx] = phoneme_id
             
-            # Calculate average F0 for this phoneme
-            phoneme_f0 = np.mean(f0[phoneme_frames])
-            if phoneme_f0 > 0:
-                # Convert to MIDI note
-                midi_note = int(round(12 * np.log2(max(phoneme_f0, 1e-5) / 440.0) + 69))
-                midi_note = np.clip(midi_note, 0, 127)
+            # Calculate average F0 for this phoneme's frames in f0 array
+            # Only use the frames for this phoneme to get average F0
+            phoneme_f0_frames = []
+            for frame_idx in frame_range:
+                if frame_idx < len(f0):
+                    phoneme_f0_frames.append(f0[frame_idx])
+            
+            phoneme_f0_frames = np.array(phoneme_f0_frames)
+            
+            if len(phoneme_f0_frames) > 0 and np.any(phoneme_f0_frames > 0):
+                # Use only voiced frames for F0 calculation
+                voiced_f0 = phoneme_f0_frames[phoneme_f0_frames > 0]
+                if len(voiced_f0) > 0:
+                    phoneme_f0 = np.mean(voiced_f0)
+                    # Convert to MIDI note
+                    midi_note = int(round(12 * np.log2(max(phoneme_f0, 1e-5) / 440.0) + 69))
+                    midi_note = np.clip(midi_note, 0, 127)
+                else:
+                    midi_note = 0
             else:
                 # Use 0 for unvoiced segments
                 midi_note = 0
             
             # Assign this MIDI note to all frames in the phoneme
-            for frame_idx in phoneme_frames:
-                frame_midi[frame_idx] = midi_note
+            for frame_idx in frame_range:
+                if frame_idx < len(frame_midi):
+                    frame_midi[frame_idx] = midi_note
+            
+            # Update current frame position
+            current_frame += phoneme_frames
+        
+        # Ensure all frames have a phoneme (just in case)
+        if current_frame < num_frames:
+            # Fill remaining frames with the last phoneme
+            last_phoneme_id = frame_phonemes[current_frame-1] if current_frame > 0 else 0
+            last_midi = frame_midi[current_frame-1] if current_frame > 0 else 0
+            
+            for i in range(current_frame, num_frames):
+                frame_phonemes[i] = last_phoneme_id
+                frame_midi[i] = last_midi
+        
+        # Log verification info
+        logger.info(f"Alignment scaling: {frames_per_second:.2f} frames per second")
+        logger.info(f"Total frames: {num_frames}, Phoneme frames mapped: {current_frame}")
         
         return frame_phonemes, frame_midi
     
@@ -448,127 +488,146 @@ class SVSPreprocessor:
         return score, metrics
     
     def plot_alignment(
-        self, 
-        file_id: str, 
-        phoneme_frames: List[int], 
-        midi: np.ndarray, 
-        f0: np.ndarray, 
-        mel_spec: np.ndarray, 
+        self,
+        file_id: str,
+        phoneme_frames: List[int],
+        midi: np.ndarray, # Phoneme-aligned MIDI
+        f0: np.ndarray, # Raw F0
+        mel_spec: np.ndarray,
         alignment_score: float,
         metrics: Dict
     ) -> str:
         """
-        Create a visualization of the alignment between features.
-        
+        Create a unified visualization of the alignment between features.
+        Mel spectrogram is the background, with pitch and phonemes overlaid.
+
         Args:
             file_id: File identifier
             phoneme_frames: Phoneme IDs for each frame
-            midi: MIDI notes for each frame
-            f0: F0 values for each frame
-            mel_spec: Mel spectrogram
+            midi: Phoneme-aligned MIDI notes for each frame
+            f0: Raw F0 values for each frame
+            mel_spec: Mel spectrogram (shape: [num_frames, n_mels])
             alignment_score: Alignment quality score
             metrics: Dictionary of alignment metrics
-            
+
         Returns:
             plot_path: Path to the saved plot
         """
-        # Create figure with gridspec
-        fig = plt.figure(figsize=(15, 10))
-        gs = fig.add_gridspec(4, 1, height_ratios=[1, 1, 1, 3], hspace=0.3)
-        
-        # Prepare axes
-        ax_phonemes = fig.add_subplot(gs[0])
-        ax_midi = fig.add_subplot(gs[1], sharex=ax_phonemes)
-        ax_f0 = fig.add_subplot(gs[2], sharex=ax_phonemes)
-        ax_mel = fig.add_subplot(gs[3], sharex=ax_phonemes)
-        
-        # Find phoneme boundaries
+        # Create figure
+        fig, ax = plt.subplots(figsize=(15, 8))
+
+        # Define x-axis (frame numbers)
+        num_frames = len(phoneme_frames)
+        x = np.arange(num_frames)
+        n_mels = mel_spec.shape[1] # Get number of mel bins
+
+        # Convert phoneme frames to numpy array
         phoneme_frames = np.array(phoneme_frames)
+
+        # Find phoneme boundaries for vertical lines
         boundaries = np.where(np.diff(phoneme_frames) != 0)[0] + 1
-        
-        # Create colormap for phonemes
-        unique_phonemes = np.unique(phoneme_frames)
-        cmap = plt.cm.get_cmap('tab20', len(unique_phonemes))
-        
-        # Plot phoneme segments
-        prev_boundary = 0
-        for boundary in np.concatenate((boundaries, [len(phoneme_frames)])):
-            phoneme_id = phoneme_frames[prev_boundary]
-            phoneme_text = self.id_to_phone.get(phoneme_id, '<UNK>')
-            
-            # Fill segment
-            ax_phonemes.fill_between(
-                [prev_boundary, boundary],
-                [0, 0],
-                [1, 1],
-                color=cmap(np.where(unique_phonemes == phoneme_id)[0][0]),
-                alpha=0.7
-            )
-            
-            # Add text if segment is wide enough
-            if boundary - prev_boundary > 10:
-                ax_phonemes.text(
-                    (prev_boundary + boundary) / 2,
-                    0.5,
-                    phoneme_text,
-                    horizontalalignment='center',
-                    verticalalignment='center',
-                    fontsize=8,
-                    fontweight='bold'
-                )
-            
-            prev_boundary = boundary
-        
-        # Plot MIDI notes
-        ax_midi.plot(midi, 'b-', linewidth=1)
-        
-        # Plot F0
-        ax_f0.plot(f0, 'r-', linewidth=1)
-        
-        # Plot mel spectrogram
-        im = ax_mel.imshow(mel_spec.T, aspect='auto', origin='lower', cmap='viridis')
-        plt.colorbar(im, ax=ax_mel)
-        
-        # Add boundary lines to all plots
+
+        # --- Plot Mel Spectrogram as Background ---
+        # Use actual mel range for extent, transpose mel_spec for imshow
+        # Extent: [left, right, bottom, top] in data coordinates
+        extent_mel = [0, num_frames, 0, n_mels]
+        im = ax.imshow(mel_spec.T, aspect='auto', origin='lower', extent=extent_mel, cmap='viridis', alpha=0.9)
+        ax.set_ylabel('Mel Bin')
+        ax.set_ylim(0, n_mels) # Set primary Y-axis limits for Mel bins
+        # Optional: Add colorbar for Mel spectrogram
+        # cbar = fig.colorbar(im, ax=ax, label='Mel Power (dB)')
+        # cbar.ax.tick_params(labelsize=8)
+
+        # --- Create Secondary Y-Axis for Pitch ---
+        ax_pitch = ax.twinx()
+
+        # --- Prepare Pitch Data (Convert F0 to MIDI scale) ---
+        f0_in_midi = np.full_like(f0, np.nan) # Initialize with NaN
+        voiced_mask = f0 > 0
+        # Use np.maximum to avoid log2(0) or log2(negative) if f0 has noise slightly below 0
+        safe_f0 = np.maximum(f0[voiced_mask], 1e-5)
+        f0_in_midi[voiced_mask] = 12 * np.log2(safe_f0 / 440.0) + 69
+        # Clipping might not be strictly necessary with NaN handling, but good practice
+        f0_in_midi = np.clip(f0_in_midi, 0, 127)
+
+        # Determine MIDI range for y-axis (using both F0 and phoneme MIDI)
+        all_midi_data = np.concatenate((f0_in_midi[~np.isnan(f0_in_midi)], midi[midi > 0]))
+        if len(all_midi_data) > 0:
+            min_midi_plot = max(0, np.min(all_midi_data) - 5)
+            max_midi_plot = min(127, np.max(all_midi_data) + 5)
+        else:
+            min_midi_plot = 40 # Default range if no voiced frames
+            max_midi_plot = 80
+
+        # --- Plot Pitch Information on Secondary Axis ---
+        # Plot detailed F0 contour
+        ax_pitch.plot(x, f0_in_midi, color='cyan', linestyle='-', linewidth=1.5, label='F0 Contour (MIDI)')
+        # Plot phoneme-aligned MIDI notes (blocky)
+        ax_pitch.plot(x, midi, color='red', linestyle='-', linewidth=2.5, drawstyle='steps-post', label='Phoneme MIDI')
+
+        # Set secondary Y-axis limits and label
+        ax_pitch.set_ylim(min_midi_plot, max_midi_plot)
+        ax_pitch.set_ylabel('MIDI Note')
+        ax_pitch.grid(True, axis='y', linestyle=':', alpha=0.6, color='white') # Add horizontal grid for pitch
+
+        # --- Plot Phoneme Boundaries (Full Height) ---
         for boundary in boundaries:
-            ax_phonemes.axvline(x=boundary, color='k', linestyle='-', alpha=0.3)
-            ax_midi.axvline(x=boundary, color='k', linestyle='-', alpha=0.3)
-            ax_f0.axvline(x=boundary, color='k', linestyle='-', alpha=0.3)
-            ax_mel.axvline(x=boundary, color='w', linestyle='-', alpha=0.3)
-        
-        # Set labels and titles
-        ax_phonemes.set_ylabel('Phoneme')
-        ax_phonemes.set_yticks([])
-        
-        ax_midi.set_ylabel('MIDI Note')
-        
-        ax_f0.set_ylabel('F0 (Hz)')
-        
-        ax_mel.set_ylabel('Mel Bins')
-        ax_mel.set_xlabel('Frames')
-        
-        # Title with alignment score
+            # Draw line spanning the full plot height
+            ax.axvline(x=boundary, ymin=0, ymax=1, color='white', linestyle='--', linewidth=1, alpha=0.7)
+
+        # --- Add Phoneme Labels ---
+        prev_boundary = 0
+        # Position labels slightly above the bottom of the plot
+        label_y_pos = ax.get_ylim()[0] + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05
+        for boundary in np.concatenate((boundaries, [num_frames])):
+            segment_center = (prev_boundary + boundary) / 2
+            segment_width = boundary - prev_boundary
+
+            # Only add label if segment is wide enough
+            if segment_width > 3: # Adjust threshold as needed
+                # Ensure the center index is valid
+                center_idx = int(segment_center)
+                if center_idx < num_frames:
+                    phoneme_id = phoneme_frames[center_idx] # Get phoneme at center
+                    phoneme_text = self.id_to_phone.get(phoneme_id, '?')
+
+                    # Position label in the middle of segment, near the bottom
+                    ax.text(segment_center, label_y_pos, phoneme_text,
+                            horizontalalignment='center', verticalalignment='bottom',
+                            fontsize=9, color='white', weight='bold',
+                            bbox=dict(boxstyle="round,pad=0.2", facecolor='black', alpha=0.5, edgecolor='none'))
+
+            prev_boundary = boundary
+
+        # --- Set Labels, Title, Legend ---
         quality_label = "Good" if alignment_score > 0.7 else "Moderate" if alignment_score > 0.4 else "Poor"
-        fig.suptitle(f'Alignment Analysis for {file_id}\n'
-                    f'Alignment Quality: {quality_label} ({alignment_score:.2f})', 
-                    fontsize=14)
-        
-        # Add metrics annotation
+        ax.set_title(f'Alignment Analysis for {file_id} - Quality: {quality_label} ({alignment_score:.2f})')
+        ax.set_xlabel('Frames')
+        # Primary Y-label (Mel Bin) already set
+        # Secondary Y-label (MIDI Note) already set
+
+        # Combine legends from both axes if needed, or just use pitch legend
+        ax_pitch.legend(loc='upper right')
+
+        # --- Add Metrics Annotation ---
         metrics_text = '\n'.join([
             f"Frames: {metrics['num_frames']}",
             f"Boundaries: {metrics['num_boundaries']}",
             f"Unique Phonemes: {metrics['unique_phonemes']}"
         ])
-        fig.text(0.02, 0.02, metrics_text, fontsize=10, verticalalignment='bottom')
-        
-        # Save plot
+        plt.figtext(0.02, 0.98, metrics_text, fontsize=9, verticalalignment='top', color='black',
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+
+        # --- Save Plot ---
         plot_dir = os.path.join(self.output_dir, "plots")
         Path(plot_dir).mkdir(exist_ok=True)
         plot_path = os.path.join(plot_dir, f"{file_id}_alignment.png")
-        plt.tight_layout()
+        # Adjust layout slightly to prevent title overlap with figtext
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        
+
+        return plot_path
         return plot_path
     
     def normalize_features(
