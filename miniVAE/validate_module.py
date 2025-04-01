@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 import os
+import yaml  # Add yaml import
 from pathlib import Path
 import random
 from tqdm import tqdm
@@ -66,10 +67,10 @@ class SVSValidationModule:
         # Try loading with DataLoader
         try:
             dataset = SVSDataset(self.h5_file)
-            loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
+            loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0, collate_fn=SVSDataModule.collate_fn)
             
             batch = next(iter(loader))
-            print(f"Successfully loaded batch: {batch['id']}")
+            print(f"Successfully loaded batch: {batch['ids']}")
             
             # Plot sample
             self._plot_dataset_sample(batch, random_key)
@@ -95,7 +96,7 @@ class SVSValidationModule:
         # Plot phonemes
         axs[0].plot(phonemes, 'bo-', markersize=2, alpha=0.5)
         axs[0].set_ylabel('Phoneme ID')
-        axs[0].set_title(f'Sample Visualization - {batch["id"][idx]}')
+        axs[0].set_title(f'Sample Visualization - {batch["ids"][idx]}')
         
         # Plot MIDI notes
         axs[1].plot(midi, 'ro-', markersize=2, alpha=0.5)
@@ -336,14 +337,39 @@ class SVSValidationModule:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Validate SVS model components.")
-    parser.add_argument("--h5_file", default="svs_dataset.h5", help="Path to dataset file")
+    # Default to None, will construct path from config if not provided
+    parser.add_argument("--h5_file", default=None, help="Path to dataset file (defaults to config dataset_dir + svs_dataset.h5)")
     parser.add_argument("--config", default="config/default.yaml", help="Path to config file")
-    parser.add_argument("--test", choices=["dataset", "encoder", "decoder", "full", "all"], 
+    parser.add_argument("--test", choices=["dataset", "encoder", "decoder", "full", "all"],
                         default="all", help="Which test to run")
-    
+
     args = parser.parse_args()
-    
-    validator = SVSValidationModule(args.h5_file, args.config)
+
+    h5_file_path = args.h5_file
+    config_path = args.config
+
+    # If h5_file is not provided, construct it from config
+    if h5_file_path is None:
+        try:
+            with open(config_path, 'r') as f:
+                config_data = yaml.safe_load(f)
+            datasets_dir = config_data.get('dataset', {}).get('datasets_dir')
+            if datasets_dir:
+                # Assuming the standard filename is svs_dataset.h5 based on previous default
+                h5_file_path = os.path.join(datasets_dir, "processed", "svs_dataset.h5")
+                print(f"Using H5 file path from config: {h5_file_path}")
+            else:
+                print(f"Warning: --h5_file not provided and 'dataset.datasets_dir' not found in {config_path}. Using default 'svs_dataset.h5'.")
+                h5_file_path = "svs_dataset.h5" # Fallback to original default filename if config key is missing
+        except FileNotFoundError:
+            print(f"Warning: Config file '{config_path}' not found. Using default 'svs_dataset.h5'.")
+            h5_file_path = "svs_dataset.h5" # Fallback if config file doesn't exist
+        except Exception as e:
+            print(f"Warning: Error reading config file '{config_path}': {e}. Using default 'svs_dataset.h5'.")
+            h5_file_path = "svs_dataset.h5" # Fallback on any other config reading error
+
+    # Instantiate validator with the determined h5_file_path and config_path
+    validator = SVSValidationModule(h5_file_path, config_path)
     
     if args.test == "dataset":
         validator.validate_dataset_loading()

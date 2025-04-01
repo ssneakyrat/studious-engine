@@ -12,3 +12,4 @@ miniFFT/datasets
 miniFFT/logs
 __pycache__
 miniVAE/datasets
+miniVAE/logs
