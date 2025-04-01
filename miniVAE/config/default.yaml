@@ -21,6 +21,7 @@ dataset:
   # Larger batch sizes help training stability but use more VRAM
   # Multiple workers improve loading speed with diminishing returns beyond CPU core count
   datasets_dir: datasets/gin
+  processed_file: datasets/gin/processed/svs_dataset.h5
 
 # Model architecture
 model:
@@ -52,7 +53,7 @@ model:
 training:
   lr: 0.001           # Standard learning rate for Adam optimizer
   weight_decay: 1e-6  # Light regularization to prevent overfitting
-  epochs: 100         # Upper limit for convergence with early stopping
+  epochs: 10         # Upper limit for convergence with early stopping
   kl_weight_init: 0.0 # Start with no KL penalty for stable initialization
   kl_weight_end: 0.01 # Low final weight preserves reconstruction quality
   kl_annealing_epochs: 20  # Gradual introduction of KL constraint

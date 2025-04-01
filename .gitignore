@@ -13,3 +13,5 @@ miniFFT/logs
 __pycache__
 miniVAE/datasets
 miniVAE/logs
+miniVAE/usage.txt
+miniVAE/preprocessor.log

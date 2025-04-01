@@ -20,9 +20,14 @@ def main(args):
     with open(args.config) as f:
         config = yaml.safe_load(f)
     
+    if args.h5_file:
+        h5_file = config['dataset']['processed_file']
+    else:
+        h5_file=args.h5_file
+
     # Create data module
     data_module = SVSDataModule(
-        h5_file=args.h5_file,
+        h5_file,
         batch_size=config['dataset']['batch_size'],
         num_workers=config['dataset']['num_workers'],
         train_split=config['dataset']['train_split']

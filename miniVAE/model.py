@@ -116,48 +116,57 @@ class Decoder(nn.Module):
         # Project latent to hidden
         hidden = self.latent_projection(z).unsqueeze(0).repeat(self.decoder_rnn.num_layers, 1, 1)
         
-        # Process F0 conditioning
-        f0_expanded = f0.unsqueeze(-1).transpose(1, 2)  # [B, 1, T]
-        f0_cond = self.f0_conditioning(f0_expanded).transpose(1, 2)  # [B, T, 32]
+        # Process F0 conditioning - ensure shapes are correct
+        f0_expanded = f0.unsqueeze(-1)  # [B, T, 1]
+        f0_expanded = f0_expanded.transpose(1, 2)  # [B, 1, T]
+        f0_cond = self.f0_conditioning(f0_expanded)  # [B, 32, T]
+        f0_cond = f0_cond.transpose(1, 2)  # [B, T, 32]
         
-        # Initialize decoder input (will use previous output / teacher forcing)
+        # Verify maximum steps to process
+        actual_max_steps = min(max_len, lengths.max().item(), f0_cond.size(1))
+        
+        # Initialize decoder input
         decoder_input = torch.zeros(batch_size, 1, self.decoder_rnn.input_size, device=z.device)
-        decoder_input[:, :, :hidden.size(-1)] = z.unsqueeze(1)  # Start with latent vector
+        
+        # Use latent size for initialization, not hidden size
+        latent_dim = z.size(-1)
+        decoder_input[:, :, :latent_dim] = z.unsqueeze(1)
         
         # Pre-allocate outputs
         all_outputs = []
         current_step = 0
         
-        # Start autoregressive decoding
-        while current_step < max_len:
-            # Get F0 conditioning for this step
+        # Start autoregressive decoding with proper bounds checking
+        while current_step < actual_max_steps:
+            # Get F0 conditioning for this step - with bounds check
             f0_step = f0_cond[:, current_step:current_step+1, :]
             
-            # Update decoder input with F0 conditioning
-            decoder_input[:, :, -f0_step.size(-1):] = f0_step
+            # Ensure the F0 conditioning size is as expected
+            f0_dim = f0_step.size(-1)
+            if f0_dim > 0 and f0_dim <= decoder_input.size(-1):
+                decoder_input[:, :, -f0_dim:] = f0_step
             
             # Run decoder for one step
             output, hidden = self.decoder_rnn(decoder_input, hidden)
             mel_output = self.mel_projection(output)
             all_outputs.append(mel_output)
             
-            # Update input for next step
-            if teacher_targets is not None and np.random.random() < teacher_forcing_ratio:
-                # Teacher forcing
-                next_input = teacher_targets[:, current_step:current_step+1, :]
-            else:
-                # Use own prediction
-                next_input = mel_output
+            # Update input for next step (with bounds check for teacher forcing)
+            use_teacher_forcing = (teacher_targets is not None and 
+                                current_step < teacher_targets.size(1) and 
+                                np.random.random() < teacher_forcing_ratio)
             
             # Prepare next decoder input
             decoder_input = torch.zeros_like(decoder_input)
-            decoder_input[:, :, :hidden.size(-1)] = output
+            decoder_input[:, :, :output.size(-1)] = output
             
             current_step += 1
-            
-            # Exit if we've reached the end of all sequences
-            if current_step >= lengths.max().item():
-                break
+        
+        # Handle case where no outputs were generated (fallback)
+        if len(all_outputs) == 0:
+            # Create a single frame of zeros as fallback
+            mel_output = torch.zeros(batch_size, 1, self.mel_projection.out_features, device=z.device)
+            all_outputs.append(mel_output)
         
         # Concatenate outputs
         decoder_outputs = torch.cat(all_outputs, dim=1)
@@ -366,7 +375,7 @@ class SVSModelLightning(pl.LightningModule):
         optimizer = torch.optim.Adam(
             self.parameters(),
             lr=self.config['training']['lr'],
-            weight_decay=self.config['training']['weight_decay']
+            weight_decay=float(self.config['training']['weight_decay'])
         )
         
         scheduler = ReduceLROnPlateau(
