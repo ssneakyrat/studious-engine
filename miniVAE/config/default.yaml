@@ -68,5 +68,4 @@ logging:
   log_interval: 100   # Updates progress bar every 100 steps
   eval_interval: 1    # Evaluates model every epoch
   sample_interval: 5  # Generates examples every 5 epochs
-  # Frequent evaluation monitors overfitting
-  # Visual samples help assess voice quality beyond metrics
+  num_sample_log: 4
