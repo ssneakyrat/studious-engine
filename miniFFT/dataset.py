@@ -114,7 +114,8 @@ class HDF5Dataset(Dataset):
             with h5py.File(self.hdf5_path, 'r') as f:
                 sample_group = f[sample_id]
 
-                mel = torch.from_numpy(sample_group['features/mel_spectrogram'][:]).float()
+                # Transpose the mel spectrogram from (n_mels, T) to (T, n_mels)
+                mel = torch.from_numpy(sample_group['features/mel_spectrogram'][:]).float().transpose(0, 1)
                 f0 = torch.from_numpy(sample_group['features/f0_values'][:]).float()
 
                 # Ensure F0 is 1D (T,) or 2D (T, 1) -> make it (T,)

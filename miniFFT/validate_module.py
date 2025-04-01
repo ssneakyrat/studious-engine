@@ -82,7 +82,7 @@ def test_dataset_loading(config: DictConfig):
                                        fmin=config.preprocessing.fmin, fmax=config.preprocessing.fmax,
                                        x_axis='time', y_axis='mel')
         axes[0].set_title("Mel Spectrogram (Target)")
-        fig.colorbar(img, ax=axes[0], format='%+2.0f dB')
+        #fig.colorbar(img, ax=axes[0], format='%+2.0f dB')
 
         # Plot F0
         times = librosa.times_like(f0, sr=config.preprocessing.sample_rate, hop_length=config.preprocessing.hop_length)
