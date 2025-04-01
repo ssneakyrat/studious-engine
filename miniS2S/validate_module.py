@@ -82,6 +82,127 @@ class ModuleValidator:
         else:
             return tensors
     
+    def test_dataset(self):
+        """Test the dataset functionality and phoneme vocabulary consistency."""
+        print("\n=== Testing Dataset and Phoneme Vocabulary ===")
+        
+        # Test data module setup and phoneme vocabulary extraction
+        data_module = self.data_module
+        
+        # Print phoneme vocabulary stats
+        num_phonemes = data_module.num_phonemes
+        phoneme_to_id = data_module.phoneme_to_id
+        id_to_phoneme = data_module.id_to_phoneme
+        
+        print(f"Phoneme vocabulary size: {num_phonemes}")
+        print(f"Sample phonemes (first 10): {list(phoneme_to_id.items())[:10]}")
+        
+        # Get several batches from the test loader
+        test_loader = data_module.test_dataloader()
+        
+        # Collect unique phoneme IDs from batches
+        all_phoneme_ids = set()
+        
+        # Process up to 3 batches (or fewer if dataset is small)
+        max_batches = 3
+        batch_count = 0
+        
+        for batch in test_loader:
+            if batch_count >= max_batches:
+                break
+                
+            # Extract phoneme IDs from batch
+            phoneme_ids = batch['phoneme_ids']
+            
+            # Add to set of unique IDs
+            all_phoneme_ids.update(phoneme_ids.unique().tolist())
+            
+            # Process first sample of each batch
+            sample_idx = 0
+            
+            # Print phoneme sequence for verification
+            phoneme_id_seq = phoneme_ids[sample_idx][:20].tolist()  # First 20 phoneme IDs
+            phoneme_seq = [id_to_phoneme.get(pid, '<UNK>') for pid in phoneme_id_seq]
+            
+            print(f"\nBatch {batch_count + 1}, Sample {sample_idx}:")
+            print(f"  Phoneme IDs (first 20): {phoneme_id_seq}")
+            print(f"  Phonemes: {phoneme_seq}")
+            
+            batch_count += 1
+        
+        # Verify IDs are within expected range
+        min_id = min(all_phoneme_ids)
+        max_id = max(all_phoneme_ids)
+        
+        print(f"\nPhoneme ID range in batches: {min_id} to {max_id}")
+        print(f"Expected range: 0 to {num_phonemes - 1}")
+        
+        # Check if any IDs are out of expected range
+        if min_id < 0 or max_id >= num_phonemes:
+            print("WARNING: Some phoneme IDs are outside the expected range!")
+        else:
+            print("All phoneme IDs are within the expected range.")
+        
+        # Test individual dataset sample consistency
+        # Get a few samples directly from the test dataset
+        test_dataset = data_module.test_dataset
+        
+        print("\nTesting individual samples from test dataset:")
+        
+        num_samples = min(3, len(test_dataset))
+        
+        for i in range(num_samples):
+            sample = test_dataset[i]
+            
+            # Get sample phoneme IDs
+            phoneme_ids = sample['phoneme_ids'].tolist()
+            
+            # Count unique phoneme IDs
+            unique_ids = set(phoneme_ids)
+            
+            print(f"\nSample {i}:")
+            print(f"  ID: {sample['id']}")
+            print(f"  Mel length: {sample['mel_length']}")
+            print(f"  Unique phoneme IDs: {len(unique_ids)}")
+            print(f"  Sample unique IDs: {list(unique_ids)[:10]}")  # Show first 10 unique IDs
+            
+            # Verify these IDs map back to phonemes
+            sample_phonemes = [id_to_phoneme.get(pid, '<UNK>') for pid in list(unique_ids)[:5]]
+            print(f"  Sample phonemes: {sample_phonemes}")
+        
+        # Create a visualization of phoneme distributions
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Count phoneme occurrences in the last sample
+        phoneme_counts = {}
+        for pid in phoneme_ids:
+            if pid in phoneme_counts:
+                phoneme_counts[pid] += 1
+            else:
+                phoneme_counts[pid] = 1
+        
+        # Convert to lists for plotting
+        ids = list(phoneme_counts.keys())
+        counts = list(phoneme_counts.values())
+        labels = [id_to_phoneme.get(pid, '<UNK>') for pid in ids]
+        
+        # Plot bar chart
+        bars = ax.bar(range(len(ids)), counts, tick_label=labels)
+        ax.set_title('Phoneme Distribution in Sample')
+        ax.set_xlabel('Phoneme')
+        ax.set_ylabel('Count')
+        
+        # Rotate x-axis labels for readability
+        plt.xticks(rotation=90)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.log_dir, "phoneme_distribution.png"))
+        self.writer.add_figure("dataset/phoneme_distribution", fig)
+        plt.close(fig)
+        
+        print("\nDataset and phoneme vocabulary test completed successfully")
+        return True
+
     def test_phoneme_encoder(self):
         """Test the phoneme encoder module."""
         print("\n=== Testing PhonemeEncoder ===")
@@ -727,6 +848,9 @@ class ModuleValidator:
         """Validate all modules."""
         print("\n=== Starting Module Validation ===")
         
+        # Test dataset first to ensure data pipeline works
+        self.test_dataset()
+        
         # Test phoneme encoder
         phoneme_features = self.test_phoneme_encoder()
         
@@ -767,8 +891,9 @@ def parse_args():
     parser.add_argument("--log_dir", type=str, default="logs/module_validation",
                         help="Directory for TensorBoard logs")
     parser.add_argument("--module", type=str, default="all",
-                        choices=["all", "phoneme_encoder", "musical_encoder", "feature_fusion", 
-                                "attention", "prenet", "decoder", "postnet", "full_model"],
+                        choices=["all", "dataset", "phoneme_encoder", "musical_encoder", 
+                                "feature_fusion", "attention", "prenet", "decoder", 
+                                "postnet", "full_model"],
                         help="Module to validate (default: all)")
     
     return parser.parse_args()
@@ -784,6 +909,8 @@ def main():
     # Run validation based on selected module
     if args.module == "all":
         validator.validate_all()
+    elif args.module == "dataset":
+        validator.test_dataset()
     elif args.module == "phoneme_encoder":
         validator.test_phoneme_encoder()
     elif args.module == "musical_encoder":

@@ -29,6 +29,11 @@ class SingingVoiceDataset(Dataset):
         self.max_mel_length = max_mel_length
         self.random_crop = random_crop
         
+        # Initialize phoneme vocabulary attributes
+        self.phoneme_to_id = None
+        self.id_to_phoneme = None
+        self.num_phonemes = None
+        
         # Open H5 file and get metadata
         with h5py.File(h5_path, 'r') as f:
             # Get sample IDs from file list or use provided ones
@@ -54,6 +59,26 @@ class SingingVoiceDataset(Dataset):
                 }
         
         print(f"Loaded {len(self.sample_ids)} samples from {h5_path}")
+    
+    def set_phoneme_vocabulary(self, phoneme_to_id, id_to_phoneme, num_phonemes):
+        """Set the phoneme vocabulary for the dataset."""
+        self.phoneme_to_id = phoneme_to_id
+        self.id_to_phoneme = id_to_phoneme
+        self.num_phonemes = num_phonemes
+    
+    def _get_phoneme_id(self, phoneme):
+        """
+        Get the ID for a phoneme.
+        
+        Args:
+            phoneme: Phoneme string
+        
+        Returns:
+            ID for the phoneme or 0 for unknown
+        """
+        if self.phoneme_to_id is None:
+            raise ValueError("Phoneme vocabulary not set. Call set_phoneme_vocabulary() first.")
+        return self.phoneme_to_id.get(phoneme, 0)
     
     def __len__(self):
         return len(self.sample_ids)
@@ -102,16 +127,11 @@ class SingingVoiceDataset(Dataset):
             # Fill in F0 values
             musical_features[:, 0] = f0_values[:n_frames]  # F0 (first column)
             
-            # We'll create a phoneme to ID mapping for simplicity
-            # In a real implementation, this would be a fixed vocabulary loaded from config
-            phoneme_set = sorted(set(phones))
-            phoneme_to_id = {p: i+1 for i, p in enumerate(phoneme_set)}  # Start from 1, 0 for padding
-            
-            # Map each frame to its corresponding phoneme ID
+            # Map each frame to its corresponding phoneme ID using the global vocabulary
             for i in range(len(phones)):
                 start_frame = int(start_frames[i])
                 end_frame = int(end_frames[i])
-                p_id = phoneme_to_id.get(phones[i], 0)  # Get phoneme ID or 0 for unknown
+                p_id = self._get_phoneme_id(phones[i])  # Use global mapping
                 
                 # Ensure end_frame is within bounds
                 end_frame = min(end_frame, n_frames)
@@ -285,7 +305,7 @@ class SingingVoiceDataModule(pl.LightningDataModule):
         """
         super().__init__()
         self.config = config
-        self.h5_path = os.path.join(config['data']['data_raw'], 'binary', 'dataset.h5')
+        self.h5_path = config['data']['data_processed']#os.path.join(config['data']['data_raw'], 'binary', 'dataset.h5')
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['dataloader']['num_workers']
         self.pin_memory = config['dataloader']['pin_memory']
@@ -348,12 +368,20 @@ class SingingVoiceDataModule(pl.LightningDataModule):
                 max_mel_length=self.max_mel_length,
                 random_crop=True  # Use random crop for training
             )
+            # Set the phoneme vocabulary for the training dataset
+            self.train_dataset.set_phoneme_vocabulary(
+                self.phoneme_to_id, self.id_to_phoneme, self.num_phonemes
+            )
             
             self.val_dataset = SingingVoiceDataset(
                 h5_path=self.h5_path,
                 sample_ids=val_ids,
                 max_mel_length=self.max_mel_length,
                 random_crop=False  # No random crop for validation
+            )
+            # Set the phoneme vocabulary for the validation dataset
+            self.val_dataset.set_phoneme_vocabulary(
+                self.phoneme_to_id, self.id_to_phoneme, self.num_phonemes
             )
             
             print(f"Training set: {len(self.train_dataset)} samples")
@@ -366,6 +394,10 @@ class SingingVoiceDataModule(pl.LightningDataModule):
                 sample_ids=val_ids[:min(10, len(val_ids))],  # Use a subset for testing
                 max_mel_length=self.max_mel_length,
                 random_crop=False
+            )
+            # Set the phoneme vocabulary for the test dataset
+            self.test_dataset.set_phoneme_vocabulary(
+                self.phoneme_to_id, self.id_to_phoneme, self.num_phonemes
             )
             
             print(f"Test set: {len(self.test_dataset)} samples")

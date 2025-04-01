@@ -3,7 +3,7 @@
 # Data paths
 data:
   data_raw: "./data/raw"     # Raw data directory containing wav, lab folders
-  data_processed: "./data/processed"  # Processed data directory
+  data_processed: "./datasets/gin/binary/gin.h5"  # Processed data directory
   output_dir: "./outputs"    # Directory for model outputs
 
 # Audio parameters
