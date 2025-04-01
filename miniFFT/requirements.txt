@@ -1,9 +1,0 @@
-torch>=1.10 # Or newer
-pytorch-lightning>=1.6 # Or newer
-pyyaml
-h5py
-numpy
-matplotlib
-librosa # Potentially needed by preprocess.py or visualization
-soundfile # Potentially needed by preprocess.py
-tensorboard
